@@ -64,4 +64,14 @@ class RandomQueueTest {
         assertEquals(4, rest.toSet().size)
         assertEquals(false, rest.contains(list[2].uri))
     }
+
+    @Test
+    fun `hasNextInRound is false once every song has played`() {
+        val q = RandomQueue(songs(3), Random(7))
+        assertEquals(true, q.hasNextInRound())
+        repeat(3) { q.next() }
+        assertEquals(false, q.hasNextInRound())
+        q.previous()
+        assertEquals(true, q.hasNextInRound())
+    }
 }

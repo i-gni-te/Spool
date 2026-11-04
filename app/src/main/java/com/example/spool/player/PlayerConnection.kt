@@ -4,11 +4,11 @@ import android.content.ComponentName
 import android.content.Context
 import android.os.Bundle
 import androidx.core.content.ContextCompat
-import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
+import com.example.spool.domain.PlayScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 data class PlayerState(
     val title: String = "",
     val artist: String = "",
+    val uri: String = "",
     val isPlaying: Boolean = false,
     val hasVideo: Boolean = false
 )
@@ -28,7 +29,7 @@ class PlayerConnection(context: Context) {
     private val _state = MutableStateFlow(PlayerState())
     val state: StateFlow<PlayerState> = _state.asStateFlow()
 
-    /** The connected player, for attaching a video view. Null until the service connects. */
+    /** The connected player, for the video surface and the seek bar. Null until connected. */
     private val _player = MutableStateFlow<Player?>(null)
     val player: StateFlow<Player?> = _player.asStateFlow()
 
@@ -52,30 +53,40 @@ class PlayerConnection(context: Context) {
         _state.value = PlayerState(
             title = c.mediaMetadata.title?.toString().orEmpty(),
             artist = c.mediaMetadata.artist?.toString().orEmpty(),
+            uri = c.currentMediaItem?.mediaId.orEmpty().removeSuffix("#next"),
             isPlaying = c.playWhenReady && c.playbackState != Player.STATE_ENDED,
-            hasVideo = c.currentTracks.isTypeSelected(C.TRACK_TYPE_VIDEO)
+            hasVideo = c.mediaMetadata.extras
+                ?.getBoolean(PlaybackService.KEY_IS_VIDEO, false) == true
         )
     }
 
-    /** Result: number of matches, 0 for none, -1 if the player isn't connected yet. */
-    fun playQuery(query: String, startUri: String? = null, onResult: (Int) -> Unit) {
+    /** Callback: items queued (0 = none, -1 = not connected yet) and whether the first is a video. */
+    fun playQuery(
+        query: String,
+        startUri: String?,
+        scope: PlayScope,
+        onResult: (count: Int, startedVideo: Boolean) -> Unit
+    ) {
         val c = controller
         if (c == null) {
-            onResult(-1)
+            onResult(-1, false)
             return
         }
         val args = Bundle().apply {
             putString(PlaybackService.KEY_QUERY, query)
             if (startUri != null) putString(PlaybackService.KEY_START_URI, startUri)
+            putString(PlaybackService.KEY_SCOPE, scope.name)
         }
         val result = c.sendCustomCommand(
             SessionCommand(PlaybackService.ACTION_PLAY_QUERY, Bundle.EMPTY),
             args
         )
         result.addListener({
-            val count = runCatching { result.get().extras.getInt(PlaybackService.KEY_COUNT) }
-                .getOrDefault(-1)
-            onResult(count)
+            val extras = runCatching { result.get().extras }.getOrNull()
+            onResult(
+                extras?.getInt(PlaybackService.KEY_COUNT, -1) ?: -1,
+                extras?.getBoolean(PlaybackService.KEY_STARTED_VIDEO, false) == true
+            )
         }, mainExecutor)
     }
 

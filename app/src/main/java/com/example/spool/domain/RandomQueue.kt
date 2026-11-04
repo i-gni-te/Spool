@@ -59,4 +59,7 @@ class RandomQueue(
         index = history.lastIndex
         return song
     }
+
+    /** True if another song is available without starting a new round. */
+    fun hasNextInRound(): Boolean = index < history.lastIndex || unplayed.isNotEmpty()
 }

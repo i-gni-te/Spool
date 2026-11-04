@@ -12,5 +12,6 @@ data class MediaItemEntity(
     val album: String,
     val durationMs: Long,
     val isVideo: Boolean,
-    val searchKey: String
+    val searchKey: String,
+    val kind: Int = MediaClassifier.SONG
 )

@@ -17,6 +17,8 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import com.example.spool.MusicApp
 import com.example.spool.data.MediaItemEntity
+import com.example.spool.domain.PlayScope
+import com.example.spool.domain.QueueFilter
 import com.example.spool.domain.RandomQueue
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
@@ -36,6 +38,8 @@ class PlaybackService : MediaSessionService() {
     private var queue: RandomQueue? = null
     private var consecutiveErrors = 0
 
+    private data class StartResult(val count: Int, val startedVideo: Boolean)
+
     override fun onCreate() {
         super.onCreate()
 
@@ -50,7 +54,7 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true) // pause when headphones unplug
             .build()
 
-        // Pause (instead of advancing) when a song ends, so we choose the next one
+        // Pause (instead of advancing) when an item ends, so we decide what comes next
         exoPlayer.pauseAtEndOfMediaItems = true
 
         exoPlayer.addListener(object : Player.Listener {
@@ -62,12 +66,12 @@ class PlaybackService : MediaSessionService() {
                 if (!playWhenReady &&
                     reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM
                 ) {
-                    playNext()
+                    onItemEnded()
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                // Skip unplayable files, but give up if some fail in a row
+                // Skip unplayable files, but give up if several fail in a row
                 if (++consecutiveErrors < MAX_CONSECUTIVE_ERRORS) playNext()
             }
         })
@@ -99,6 +103,19 @@ class PlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
+    /** An item finished on its own: loop it, move on, or stop at the end of the queue. */
+    private fun onItemEnded() {
+        when (PlaybackSettings.loop.value) {
+            LoopMode.ONE -> {
+                exoPlayer.seekTo(0L)
+                exoPlayer.play()
+            }
+            LoopMode.ALL -> playNext()
+            LoopMode.OFF ->
+                if (queue?.hasNextInRound() == true) playNext() else exoPlayer.seekTo(0L)
+        }
+    }
+
     private fun playNext() {
         queue?.next()?.let(::play)
     }
@@ -111,24 +128,32 @@ class PlaybackService : MediaSessionService() {
     private fun play(item: MediaItemEntity) {
         val current = item.toMediaItem()
         // Second item is a placeholder so ExoPlayer reports "next" as available.
-        // It never plays: we pause at the end of the first item and pick the next song ourselves.
+        // It never plays: we pause at the end of the first item and pick the next one ourselves.
         val placeholder = current.buildUpon().setMediaId(item.uri + "#next").build()
         exoPlayer.setMediaItems(listOf(current, placeholder))
         exoPlayer.prepare()
         exoPlayer.play()
     }
 
-    /** Builds a new shuffled queue from a search and starts playing. Returns the match count. */
-    private suspend fun startQuery(query: String, startUri: String?): Int {
+    /** Builds a new shuffled queue from a search and starts playing. */
+    private suspend fun startQuery(
+        query: String,
+        startUri: String?,
+        playScope: PlayScope
+    ): StartResult {
         val repo = (application as MusicApp).repository
         val results = repo.searchOnce(query)
-        if (results.isEmpty()) return 0
-        val newQueue = RandomQueue(results)
+        val first = startUri?.let { uri -> results.firstOrNull { it.uri == uri } }
+        val plan = QueueFilter.plan(results, playScope, first)
+        if (plan.pool.isEmpty()) return StartResult(0, false)
+
+        val newQueue = RandomQueue(plan.pool)
         queue = newQueue
         consecutiveErrors = 0
-        val first = startUri?.let { uri -> results.firstOrNull { it.uri == uri } }
-        if (first != null) play(newQueue.startWith(first)) else playNext()
-        return results.size
+        val anchor = plan.anchor
+        val started = if (anchor != null) newQueue.startWith(anchor) else newQueue.next()
+        if (started != null) play(started)
+        return StartResult(plan.pool.size, started?.isVideo == true)
     }
 
     private fun MediaItemEntity.toMediaItem(): MediaItem =
@@ -140,6 +165,7 @@ class PlaybackService : MediaSessionService() {
                     .setTitle(title)
                     .setArtist(artist)
                     .setAlbumTitle(album.takeIf { it.isNotEmpty() })
+                    .setExtras(Bundle().apply { putBoolean(KEY_IS_VIDEO, isVideo) })
                     .build()
             )
             .build()
@@ -171,11 +197,19 @@ class PlaybackService : MediaSessionService() {
             }
             val future = SettableFuture.create<SessionResult>()
             scope.launch {
-                val count = startQuery(args.getString(KEY_QUERY).orEmpty(), args.getString(KEY_START_URI))
+                val result = startQuery(
+                    query = args.getString(KEY_QUERY).orEmpty(),
+                    startUri = args.getString(KEY_START_URI),
+                    playScope = runCatching { PlayScope.valueOf(args.getString(KEY_SCOPE).orEmpty()) }
+                        .getOrDefault(PlayScope.AUTO)
+                )
                 future.set(
                     SessionResult(
                         SessionResult.RESULT_SUCCESS,
-                        Bundle().apply { putInt(KEY_COUNT, count) }
+                        Bundle().apply {
+                            putInt(KEY_COUNT, result.count)
+                            putBoolean(KEY_STARTED_VIDEO, result.startedVideo)
+                        }
                     )
                 )
             }
@@ -184,11 +218,13 @@ class PlaybackService : MediaSessionService() {
     }
 
     companion object {
-
-        const val KEY_START_URI = "start_uri"
         const val ACTION_PLAY_QUERY = "com.example.spool.PLAY_QUERY"
         const val KEY_QUERY = "query"
+        const val KEY_START_URI = "start_uri"
+        const val KEY_SCOPE = "scope"
         const val KEY_COUNT = "count"
+        const val KEY_STARTED_VIDEO = "started_video"
+        const val KEY_IS_VIDEO = "is_video"
         private const val MAX_CONSECUTIVE_ERRORS = 5
         private val PLAY_QUERY_COMMAND = SessionCommand(ACTION_PLAY_QUERY, Bundle.EMPTY)
     }

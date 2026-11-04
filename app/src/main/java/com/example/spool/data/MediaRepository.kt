@@ -9,6 +9,8 @@ class MediaRepository(
 ) {
     val count: Flow<Int> = dao.count()
 
+    fun topArtists(limit: Int = 12): Flow<List<ArtistCount>> = dao.topArtists(limit)
+
     fun search(query: String): Flow<List<MediaItemEntity>> {
         val q = TextNormalizer.normalize(query)
         return if (q.isEmpty()) dao.all() else dao.search(q)

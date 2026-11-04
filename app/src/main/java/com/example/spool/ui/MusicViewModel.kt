@@ -4,19 +4,28 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.Player
 import com.example.spool.MusicApp
+import com.example.spool.data.ArtistCount
+import com.example.spool.data.MediaClassifier
 import com.example.spool.data.MediaItemEntity
+import com.example.spool.domain.PlayScope
+import com.example.spool.player.LoopMode
+import com.example.spool.player.PlaybackSettings
 import com.example.spool.player.PlayerState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import androidx.media3.common.Player
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MusicViewModel(app: Application) : AndroidViewModel(app) {
@@ -28,8 +37,24 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
 
-    val results: StateFlow<List<MediaItemEntity>> = _query
-        .flatMapLatest { repo.search(it) }
+    /** Everything matching the text, shared by all three screens. */
+    private val found: StateFlow<List<MediaItemEntity>> =
+        _query.flatMapLatest { repo.search(it) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val songs: StateFlow<List<MediaItemEntity>> = found
+        .map { list -> list.filter { it.kind == MediaClassifier.SONG } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val videos: StateFlow<List<MediaItemEntity>> = found
+        .map { list -> list.filter { it.kind == MediaClassifier.VIDEO } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val shorts: StateFlow<List<MediaItemEntity>> = found
+        .map { list -> list.filter { it.kind == MediaClassifier.SHORT } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val topArtists: StateFlow<List<ArtistCount>> = repo.topArtists(12)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val libraryCount: StateFlow<Int> = repo.count
@@ -41,8 +66,12 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
+    private val _openVideo = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val openVideoEvents: SharedFlow<Unit> = _openVideo.asSharedFlow()
+
     val playerState: StateFlow<PlayerState> = player.state
     val videoPlayer: StateFlow<Player?> = player.player
+    val loop: StateFlow<LoopMode> = PlaybackSettings.loop.asStateFlow()
 
     fun onQueryChange(text: String) {
         _query.value = text
@@ -65,15 +94,25 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun play(startUri: String? = null) {
-        val q = _query.value
-        player.playQuery(q, startUri) { count ->
+    /** A tapped item ([startUri]) decides what kind of queue it is; otherwise [scope] does. */
+    fun play(startUri: String? = null, scope: PlayScope = PlayScope.AUTO) {
+        player.playQuery(_query.value, startUri, scope) { count, startedVideo ->
             _message.value = when {
                 count < 0 -> "Player is still starting, try again in a moment"
-                count == 0 -> "Nothing to play"
+                count == 0 -> "Nothing to play here"
                 else -> null
             }
+            if (count > 0 && startedVideo) _openVideo.tryEmit(Unit)
         }
+    }
+
+    fun playArtist(name: String) {
+        _query.value = name
+        play()
+    }
+
+    fun cycleLoop() {
+        PlaybackSettings.loop.value = PlaybackSettings.loop.value.next()
     }
 
     fun previous() = player.previous()

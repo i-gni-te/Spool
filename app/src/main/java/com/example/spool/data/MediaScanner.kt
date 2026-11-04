@@ -15,9 +15,9 @@ class MediaScanner(private val context: Context) {
 
     private fun scanAudio(): List<MediaItemEntity> {
         val collection = MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
-        // IS_MUSIC skips ringtones, alarms and notification sounds
-        val selection =
-            "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND ${MediaStore.MediaColumns.DURATION} > 0"
+        // IS_MUSIC skips ringtones, alarms and voice notes; the floor skips tiny sound clips
+        val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND " +
+                "${MediaStore.MediaColumns.DURATION} >= $MIN_SONG_MS"
         return query(collection, selection, isVideo = false)
     }
 
@@ -28,14 +28,21 @@ class MediaScanner(private val context: Context) {
     }
 
     private fun query(collection: Uri, selection: String?, isVideo: Boolean): List<MediaItemEntity> {
-        val projection = arrayOf(
-            MediaStore.MediaColumns._ID,
-            MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.TITLE,
-            MediaStore.MediaColumns.ARTIST,
-            MediaStore.MediaColumns.ALBUM,
-            MediaStore.MediaColumns.DURATION
-        )
+        val projection = buildList {
+            add(MediaStore.MediaColumns._ID)
+            add(MediaStore.MediaColumns.DISPLAY_NAME)
+            add(MediaStore.MediaColumns.TITLE)
+            add(MediaStore.MediaColumns.ARTIST)
+            add(MediaStore.MediaColumns.ALBUM)
+            add(MediaStore.MediaColumns.DURATION)
+            add(MediaStore.MediaColumns.RELATIVE_PATH)
+            if (isVideo) {
+                add(MediaStore.MediaColumns.WIDTH)
+                add(MediaStore.MediaColumns.HEIGHT)
+                add(MediaStore.MediaColumns.ORIENTATION)
+            }
+        }.toTypedArray()
+
         val items = mutableListOf<MediaItemEntity>()
         context.contentResolver.query(collection, projection, selection, null, null)?.use { c ->
             val idCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
@@ -44,16 +51,28 @@ class MediaScanner(private val context: Context) {
             val artistCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.ARTIST)
             val albumCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.ALBUM)
             val durCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DURATION)
+            val pathCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
+            val widthCol = if (isVideo) c.getColumnIndexOrThrow(MediaStore.MediaColumns.WIDTH) else -1
+            val heightCol = if (isVideo) c.getColumnIndexOrThrow(MediaStore.MediaColumns.HEIGHT) else -1
+            val rotCol = if (isVideo) c.getColumnIndexOrThrow(MediaStore.MediaColumns.ORIENTATION) else -1
+
             while (c.moveToNext()) {
-                val uri = ContentUris.withAppendedId(collection, c.getLong(idCol))
+                val displayName = c.getString(nameCol) ?: ""
+                val durationMs = c.getLong(durCol)
+                val kind = if (isVideo) {
+                    MediaClassifier.classifyVideo(displayName, durationMs)
+                } else {
+                    MediaClassifier.SONG
+                }
                 items += buildItem(
-                    uri = uri,
-                    displayName = c.getString(nameCol) ?: "",
+                    uri = ContentUris.withAppendedId(collection, c.getLong(idCol)),
+                    displayName = displayName,
                     rawTitle = c.getString(titleCol),
                     rawArtist = c.getString(artistCol),
                     rawAlbum = c.getString(albumCol),
-                    durationMs = c.getLong(durCol),
-                    isVideo = isVideo
+                    durationMs = durationMs,
+                    isVideo = isVideo,
+                    kind = kind
                 )
             }
         }
@@ -67,7 +86,8 @@ class MediaScanner(private val context: Context) {
         rawArtist: String?,
         rawAlbum: String?,
         durationMs: Long,
-        isVideo: Boolean
+        isVideo: Boolean,
+        kind: Int
     ): MediaItemEntity {
         val tagArtist = rawArtist.cleanTag()
         val (nameArtist, nameTitle) = TextNormalizer.parseFileName(displayName)
@@ -85,7 +105,8 @@ class MediaScanner(private val context: Context) {
             album = rawAlbum.cleanTag() ?: "",
             durationMs = durationMs,
             isVideo = isVideo,
-            searchKey = TextNormalizer.normalize(listOfNotNull(artist, title).joinToString(" "))
+            searchKey = TextNormalizer.normalize(listOfNotNull(artist, title).joinToString(" ")),
+            kind = kind
         )
     }
 
@@ -94,5 +115,6 @@ class MediaScanner(private val context: Context) {
 
     companion object {
         const val UNKNOWN_ARTIST = "Unknown artist"
+        private const val MIN_SONG_MS = 30_000
     }
 }
