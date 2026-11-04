@@ -11,12 +11,12 @@ class MediaRepository(
 
     fun search(query: String): Flow<List<MediaItemEntity>> {
         val q = TextNormalizer.normalize(query)
-        return if (q.isEmpty()) flowOf(emptyList()) else dao.search(q)
+        return if (q.isEmpty()) dao.all() else dao.search(q)
     }
 
     suspend fun searchOnce(query: String): List<MediaItemEntity> {
         val q = TextNormalizer.normalize(query)
-        return if (q.isEmpty()) emptyList() else dao.searchOnce(q)
+        return if (q.isEmpty()) dao.allOnce() else dao.searchOnce(q)
     }
 
     /** Adds new files, updates changed ones, removes files that no longer exist. */

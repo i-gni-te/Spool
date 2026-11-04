@@ -8,20 +8,26 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 
 @OptIn(UnstableApi::class)
 @Composable
-fun VideoSurface(videoPlayer: Player, modifier: Modifier = Modifier) {
+fun VideoSurface(videoPlayer: Player, zoom: Boolean, modifier: Modifier = Modifier) {
     AndroidView(
         modifier = modifier.background(Color.Black),
         factory = { context ->
             PlayerView(context).apply {
-                useController = false // our own buttons control playback
+                useController = false // our own overlay controls playback
                 player = videoPlayer
             }
         },
-        update = { it.player = videoPlayer },
+        update = { view ->
+            view.player = videoPlayer
+            view.resizeMode =
+                if (zoom) AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                else AspectRatioFrameLayout.RESIZE_MODE_FIT
+        },
         onRelease = { it.player = null }
     )
 }

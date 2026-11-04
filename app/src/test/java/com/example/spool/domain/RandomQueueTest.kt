@@ -54,4 +54,14 @@ class RandomQueueTest {
         assertNull(q.next())
         assertNull(q.previous())
     }
+
+    @Test
+    fun `startWith plays that song first then continues without repeating it`() {
+        val list = songs(5)
+        val q = RandomQueue(list, Random(6))
+        assertEquals(list[2], q.startWith(list[2]))
+        val rest = List(4) { q.next()!!.uri }
+        assertEquals(4, rest.toSet().size)
+        assertEquals(false, rest.contains(list[2].uri))
+    }
 }

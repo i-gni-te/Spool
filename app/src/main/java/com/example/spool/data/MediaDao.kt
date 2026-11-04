@@ -24,4 +24,10 @@ interface MediaDao {
 
     @Query("DELETE FROM media_items WHERE uri IN (:uris)")
     suspend fun deleteByUris(uris: List<String>)
+
+    @Query("SELECT * FROM media_items ORDER BY artist, title")
+    fun all(): Flow<List<MediaItemEntity>>
+
+    @Query("SELECT * FROM media_items")
+    suspend fun allOnce(): List<MediaItemEntity>
 }

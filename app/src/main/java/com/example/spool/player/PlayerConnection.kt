@@ -58,13 +58,16 @@ class PlayerConnection(context: Context) {
     }
 
     /** Result: number of matches, 0 for none, -1 if the player isn't connected yet. */
-    fun playQuery(query: String, onResult: (Int) -> Unit) {
+    fun playQuery(query: String, startUri: String? = null, onResult: (Int) -> Unit) {
         val c = controller
         if (c == null) {
             onResult(-1)
             return
         }
-        val args = Bundle().apply { putString(PlaybackService.KEY_QUERY, query) }
+        val args = Bundle().apply {
+            putString(PlaybackService.KEY_QUERY, query)
+            if (startUri != null) putString(PlaybackService.KEY_START_URI, startUri)
+        }
         val result = c.sendCustomCommand(
             SessionCommand(PlaybackService.ACTION_PLAY_QUERY, Bundle.EMPTY),
             args

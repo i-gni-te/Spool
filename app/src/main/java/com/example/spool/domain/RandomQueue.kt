@@ -50,4 +50,13 @@ class RandomQueue(
         unplayed.remove(pick)
         return pick
     }
+
+    /** Plays a chosen song first; the shuffle continues from the rest without repeating it. */
+    fun startWith(song: MediaItemEntity): MediaItemEntity {
+        while (history.size > index + 1) history.removeAt(history.lastIndex) // drop forward history
+        unplayed.removeAll { it.uri == song.uri }
+        history.add(song)
+        index = history.lastIndex
+        return song
+    }
 }

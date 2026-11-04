@@ -119,13 +119,15 @@ class PlaybackService : MediaSessionService() {
     }
 
     /** Builds a new shuffled queue from a search and starts playing. Returns the match count. */
-    private suspend fun startQuery(query: String): Int {
+    private suspend fun startQuery(query: String, startUri: String?): Int {
         val repo = (application as MusicApp).repository
         val results = repo.searchOnce(query)
         if (results.isEmpty()) return 0
-        queue = RandomQueue(results)
+        val newQueue = RandomQueue(results)
+        queue = newQueue
         consecutiveErrors = 0
-        playNext()
+        val first = startUri?.let { uri -> results.firstOrNull { it.uri == uri } }
+        if (first != null) play(newQueue.startWith(first)) else playNext()
         return results.size
     }
 
@@ -169,7 +171,7 @@ class PlaybackService : MediaSessionService() {
             }
             val future = SettableFuture.create<SessionResult>()
             scope.launch {
-                val count = startQuery(args.getString(KEY_QUERY).orEmpty())
+                val count = startQuery(args.getString(KEY_QUERY).orEmpty(), args.getString(KEY_START_URI))
                 future.set(
                     SessionResult(
                         SessionResult.RESULT_SUCCESS,
@@ -182,6 +184,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     companion object {
+
+        const val KEY_START_URI = "start_uri"
         const val ACTION_PLAY_QUERY = "com.example.spool.PLAY_QUERY"
         const val KEY_QUERY = "query"
         const val KEY_COUNT = "count"

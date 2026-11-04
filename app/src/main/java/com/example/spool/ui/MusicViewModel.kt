@@ -65,13 +65,12 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun playQuery() {
+    fun play(startUri: String? = null) {
         val q = _query.value
-        if (q.isBlank()) return
-        player.playQuery(q) { count ->
+        player.playQuery(q, startUri) { count ->
             _message.value = when {
                 count < 0 -> "Player is still starting, try again in a moment"
-                count == 0 -> "No matches for \"$q\""
+                count == 0 -> "Nothing to play"
                 else -> null
             }
         }
