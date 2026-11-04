@@ -30,6 +30,12 @@ import com.example.spool.ui.NowPlayingBar
 import com.example.spool.ui.PermissionScreen
 import com.example.spool.ui.SearchScreen
 import com.example.spool.ui.theme.SpoolTheme
+import android.content.res.Configuration
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.platform.LocalConfiguration
+import com.example.spool.ui.VideoSurface
 
 class MainActivity : ComponentActivity() {
 
@@ -109,6 +115,11 @@ fun SpoolRoot(
         return
     }
     val playerState by vm.playerState.collectAsState()
+    val videoPlayer by vm.videoPlayer.collectAsState()
+    val vp = videoPlayer
+    val landscape =
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     Scaffold(
         bottomBar = {
             NowPlayingBar(
@@ -119,6 +130,20 @@ fun SpoolRoot(
             )
         }
     ) { padding ->
-        SearchScreen(vm, Modifier.padding(padding))
+        when {
+            // Landscape video: fill the screen
+            vp != null && playerState.hasVideo && landscape ->
+                VideoSurface(vp, Modifier.padding(padding).fillMaxSize())
+
+            // Portrait video: video on top, search below
+            vp != null && playerState.hasVideo ->
+                Column(Modifier.padding(padding)) {
+                    VideoSurface(vp, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+                    SearchScreen(vm, Modifier.weight(1f))
+                }
+
+            // Audio: just the search screen
+            else -> SearchScreen(vm, Modifier.padding(padding))
+        }
     }
 }

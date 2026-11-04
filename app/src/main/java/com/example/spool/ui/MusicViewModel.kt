@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import androidx.media3.common.Player
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MusicViewModel(app: Application) : AndroidViewModel(app) {
@@ -41,6 +42,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     val message: StateFlow<String?> = _message.asStateFlow()
 
     val playerState: StateFlow<PlayerState> = player.state
+    val videoPlayer: StateFlow<Player?> = player.player
 
     fun onQueryChange(text: String) {
         _query.value = text

@@ -18,6 +18,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SPOOL">
         <activity
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:name=".MainActivity"
             android:exported="true"
             android:theme="@style/Theme.SPOOL"
