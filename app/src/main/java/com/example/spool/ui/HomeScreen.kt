@@ -62,18 +62,14 @@ fun HomeScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // Wordmark
+        // Wordmark
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                LogoMark(markSize = 30.dp)
+                Spacer(Modifier.size(8.dp))
                 Text(
                     stringResource(R.string.app_name).lowercase(),
                     style = MaterialTheme.typography.headlineMedium
-                )
-                Spacer(Modifier.size(4.dp))
-                Spacer(
-                    Modifier
-                        .padding(top = 10.dp)
-                        .size(8.dp)
-                        .background(SpoolGradient, CircleShape)
                 )
                 Spacer(Modifier.weight(1f))
                 Text(

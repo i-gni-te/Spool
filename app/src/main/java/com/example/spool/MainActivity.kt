@@ -50,6 +50,8 @@ import com.example.spool.ui.VideosScreen
 import com.example.spool.ui.findActivity
 import com.example.spool.ui.theme.SpoolTheme
 import com.example.spool.ui.theme.spoolBackground
+import android.os.SystemClock
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -62,7 +64,20 @@ class MainActivity : ComponentActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splash = installSplashScreen()
         super.onCreate(savedInstanceState)
+
+        val shownAt = SystemClock.uptimeMillis()
+        splash.setKeepOnScreenCondition { SystemClock.uptimeMillis() - shownAt < 600 }
+        splash.setOnExitAnimationListener { provider ->
+            provider.view.animate()
+                .alpha(0f)
+                .scaleX(1.1f)
+                .scaleY(1.1f)
+                .setDuration(260)
+                .withEndAction { provider.remove() }
+                .start()
+        }
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT)
