@@ -1,5 +1,10 @@
 *.iml
+*.jks
+*.keystore
+keystore.properties
 .gradle
+/app/build
+/app/release
 /local.properties
 /.idea/caches
 /.idea/libraries

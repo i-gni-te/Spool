@@ -13,7 +13,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.spool"
+        applicationId = "com.cueapp.cue"
         minSdk = 33
         targetSdk = 36
         versionCode = 1

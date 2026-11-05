@@ -71,7 +71,7 @@ fun SongsScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
         }
 
         items(songs, key = { it.uri }) { song ->
-            SongRow(song) {
+            SongRow(song,vm) {
                 vm.play(startUri = song.uri)
                 focus.clearFocus()
             }
@@ -80,7 +80,7 @@ fun SongsScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun SongRow(song: MediaItemEntity, onClick: () -> Unit) {
+private fun SongRow(song: MediaItemEntity, vm: MusicViewModel, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -112,5 +112,6 @@ private fun SongRow(song: MediaItemEntity, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis
             )
         }
+        ItemMenuButton(item = song, vm = vm)
     }
 }

@@ -20,6 +20,10 @@ class MediaRepository(
         val q = TextNormalizer.normalize(query)
         return if (q.isEmpty()) dao.allOnce() else dao.searchOnce(q)
     }
+    suspend fun byUri(uri: String): MediaItemEntity? = dao.byUri(uri)
+
+    suspend fun remove(uri: String) = dao.deleteByUris(listOf(uri))
+
 
     /** Adds new files, updates changed ones, removes files that no longer exist. */
     suspend fun rescan() {
