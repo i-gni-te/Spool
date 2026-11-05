@@ -18,7 +18,8 @@ data class PlayerState(
     val artist: String = "",
     val uri: String = "",
     val isPlaying: Boolean = false,
-    val hasVideo: Boolean = false
+    val hasVideo: Boolean = false,
+    val isShort: Boolean = false
 )
 
 class PlayerConnection(context: Context) {
@@ -50,13 +51,14 @@ class PlayerConnection(context: Context) {
 
     private fun publish() {
         val c = controller ?: return
+        val extras = c.mediaMetadata.extras
         _state.value = PlayerState(
             title = c.mediaMetadata.title?.toString().orEmpty(),
             artist = c.mediaMetadata.artist?.toString().orEmpty(),
             uri = c.currentMediaItem?.mediaId.orEmpty().removeSuffix("#next"),
             isPlaying = c.playWhenReady && c.playbackState != Player.STATE_ENDED,
-            hasVideo = c.mediaMetadata.extras
-                ?.getBoolean(PlaybackService.KEY_IS_VIDEO, false) == true
+            hasVideo = extras?.getBoolean(PlaybackService.KEY_IS_VIDEO, false) == true,
+            isShort = extras?.getBoolean(PlaybackService.KEY_IS_SHORT, false) == true
         )
     }
 
@@ -88,6 +90,20 @@ class PlayerConnection(context: Context) {
                 extras?.getBoolean(PlaybackService.KEY_STARTED_VIDEO, false) == true
             )
         }, mainExecutor)
+    }
+
+    /** Plays a single item by itself (the shorts feed). */
+    fun playItem(uri: String) {
+        val c = controller ?: return
+        val args = Bundle().apply { putString(PlaybackService.KEY_START_URI, uri) }
+        c.sendCustomCommand(
+            SessionCommand(PlaybackService.ACTION_PLAY_ITEM, Bundle.EMPTY),
+            args
+        )
+    }
+
+    fun pause() {
+        controller?.pause()
     }
 
     fun togglePlayPause() {

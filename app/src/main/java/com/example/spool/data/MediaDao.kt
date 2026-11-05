@@ -31,6 +31,8 @@ interface MediaDao {
     @Query("SELECT COUNT(*) FROM media_items")
     fun count(): Flow<Int>
 
+    @Query("SELECT * FROM media_items WHERE uri = :uri LIMIT 1")
+    suspend fun byUri(uri: String): MediaItemEntity?
     @Query("SELECT uri FROM media_items")
     suspend fun allUris(): List<String>
 

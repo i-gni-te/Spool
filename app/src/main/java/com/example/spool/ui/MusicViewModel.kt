@@ -9,6 +9,7 @@ import com.example.spool.MusicApp
 import com.example.spool.data.ArtistCount
 import com.example.spool.data.MediaClassifier
 import com.example.spool.data.MediaItemEntity
+import com.example.spool.data.Prefs
 import com.example.spool.domain.PlayScope
 import com.example.spool.player.LoopMode
 import com.example.spool.player.PlaybackSettings
@@ -27,12 +28,24 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+/** A file change that needs the user's permission, shown by the system as a dialog. */
+sealed interface FileRequest {
+    val item: MediaItemEntity
+}
+
+data class TrashRequest(override val item: MediaItemEntity) : FileRequest
+data class RenameRequest(override val item: MediaItemEntity, val newBaseName: String) : FileRequest
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
+    private val appContext: Application = app
     private val musicApp = app as MusicApp
     private val repo = musicApp.repository
     private val player = musicApp.playerConnection
+
+    private val _onboardingDone = MutableStateFlow(Prefs.onboardingDone(app))
+    val onboardingDone: StateFlow<Boolean> = _onboardingDone.asStateFlow()
 
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
@@ -69,9 +82,28 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     private val _openVideo = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val openVideoEvents: SharedFlow<Unit> = _openVideo.asSharedFlow()
 
+    // Shorts feed
+    private val _feed = MutableStateFlow<List<MediaItemEntity>>(emptyList())
+    val feed: StateFlow<List<MediaItemEntity>> = _feed.asStateFlow()
+
+    private val _feedStart = MutableStateFlow("")
+    val feedStart: StateFlow<String> = _feedStart.asStateFlow()
+
+    private val _openShorts = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val openShortsEvents: SharedFlow<Unit> = _openShorts.asSharedFlow()
+
+    // File changes (delete, rename) that need a system permission dialog
+    private val _fileRequests = MutableSharedFlow<FileRequest>(extraBufferCapacity = 1)
+    val fileRequests: SharedFlow<FileRequest> = _fileRequests.asSharedFlow()
+
     val playerState: StateFlow<PlayerState> = player.state
     val videoPlayer: StateFlow<Player?> = player.player
     val loop: StateFlow<LoopMode> = PlaybackSettings.loop.asStateFlow()
+
+    fun finishOnboarding() {
+        Prefs.setOnboardingDone(appContext)
+        _onboardingDone.value = true
+    }
 
     fun onQueryChange(text: String) {
         _query.value = text
@@ -111,10 +143,76 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         play()
     }
 
-    fun cycleLoop() {
-        PlaybackSettings.loop.value = PlaybackSettings.loop.value.next()
+    // ----- Shorts feed -----
+
+    /** Opens the feed on [startUri]; the rest follow in random order. */
+    fun openShortsFeed(startUri: String) {
+        val all = shorts.value
+        val start = all.firstOrNull { it.uri == startUri } ?: return
+        _feed.value = listOf(start) + all.filter { it.uri != startUri }.shuffled()
+        _feedStart.value = startUri
+        _openShorts.tryEmit(Unit)
     }
 
+    fun openShortsFeedShuffled() {
+        val list = shorts.value.shuffled()
+        val first = list.firstOrNull() ?: return
+        _feed.value = list
+        _feedStart.value = first.uri
+        _openShorts.tryEmit(Unit)
+    }
+
+    /** From the mini-player: back into the feed at the short that's loaded. */
+    fun reopenShortsFeed() {
+        val current = playerState.value.uri
+        _feedStart.value = current
+        if (_feed.value.none { it.uri == current }) _feed.value = shorts.value
+        _openShorts.tryEmit(Unit)
+    }
+
+    fun playShort(uri: String) = player.playItem(uri)
+
+    // ----- Delete and rename -----
+
+    fun delete(item: MediaItemEntity) {
+        _fileRequests.tryEmit(TrashRequest(item))
+    }
+
+    fun rename(item: MediaItemEntity, newBaseName: String) {
+        _fileRequests.tryEmit(RenameRequest(item, newBaseName))
+    }
+
+    suspend fun fileName(uri: String): String? = musicApp.fileEditor.displayName(uri)
+
+    /** Called with the user's answer to the system permission dialog. */
+    fun onFileRequestResult(request: FileRequest, granted: Boolean) {
+        if (!granted) return
+        viewModelScope.launch {
+            when (request) {
+                is TrashRequest -> {
+                    // On approval the system has already moved the file to the trash
+                    repo.remove(request.item.uri)
+                    _feed.value = _feed.value.filter { it.uri != request.item.uri }
+                    val now = playerState.value
+                    if (now.uri == request.item.uri && !now.isShort) player.next()
+                }
+
+                is RenameRequest -> {
+                    val ok = musicApp.fileEditor.rename(request.item.uri, request.newBaseName)
+                    _message.value = if (ok) null else "Couldn't rename that file"
+                    rescan()
+                }
+            }
+        }
+    }
+
+    fun cycleLoop() {
+        val next = PlaybackSettings.loop.value.next()
+        PlaybackSettings.loop.value = next
+        Prefs.setLoopMode(appContext, next)
+    }
+
+    fun pause() = player.pause()
     fun previous() = player.previous()
     fun next() = player.next()
     fun togglePlayPause() = player.togglePlayPause()
