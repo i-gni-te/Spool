@@ -201,6 +201,9 @@ fun SpoolRoot(
         return
     }
 
+    val queue by vm.queue.collectAsState()
+    val shortsFill by vm.shortsFill.collectAsState()
+
     val playerState by vm.playerState.collectAsState()
     val videoPlayer by vm.videoPlayer.collectAsState()
     val loop by vm.loop.collectAsState()
@@ -258,6 +261,8 @@ fun SpoolRoot(
 
     when {
         shortsOpen -> ShortsFeedScreen(
+            fill = shortsFill,
+            onToggleFill = vm::toggleShortsFill,
             feed = feed,
             startUri = feedStart,
             player = videoPlayer,
@@ -286,6 +291,8 @@ fun SpoolRoot(
         )
 
         nowPlaying -> NowPlayingScreen(
+            queue = queue,
+            onPlayQueueItem = vm::playQueueItem,
             player = videoPlayer,
             state = playerState,
             loop = loop,

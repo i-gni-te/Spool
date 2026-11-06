@@ -108,6 +108,15 @@ class PlayerConnection(context: Context) {
     fun pause() {
         controller?.pause()
     }
+    /** Plays a song picked from the queue list. */
+    fun playQueueItem(uri: String) {
+        val c = controller ?: return
+        val args = Bundle().apply { putString(PlaybackService.KEY_START_URI, uri) }
+        c.sendCustomCommand(
+            SessionCommand(PlaybackService.ACTION_PLAY_QUEUE_ITEM, Bundle.EMPTY),
+            args
+        )
+    }
 
     fun togglePlayPause() {
         val c = controller ?: return

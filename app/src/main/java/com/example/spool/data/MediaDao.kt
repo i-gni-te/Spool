@@ -41,4 +41,19 @@ interface MediaDao {
 
     @Query("DELETE FROM media_items WHERE uri IN (:uris)")
     suspend fun deleteByUris(uris: List<String>)
+
+    @Query("SELECT * FROM media_items WHERE uri IN (:uris)")
+    suspend fun byUris(uris: List<String>): List<MediaItemEntity>
+
+    @Query("UPDATE media_items SET kind = :kind WHERE uri = :uri")
+    suspend fun updateKind(uri: String, kind: Int)
+
+    @Upsert
+    suspend fun putOverride(entry: KindOverride)
+
+    @Query("SELECT * FROM kind_overrides")
+    suspend fun allOverrides(): List<KindOverride>
+
+    @Query("DELETE FROM kind_overrides WHERE uri IN (:uris)")
+    suspend fun deleteOverrides(uris: List<String>)
 }

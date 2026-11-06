@@ -33,6 +33,8 @@ import com.example.spool.domain.ArtistIndex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
+import com.example.spool.domain.RandomQueue
+import com.example.spool.player.QueueInfo
 
 /** A file change that needs the user's permission, shown by the system as a dialog. */
 sealed interface FileRequest {
@@ -105,6 +107,8 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     private val _feed = MutableStateFlow<List<MediaItemEntity>>(emptyList())
     val feed: StateFlow<List<MediaItemEntity>> = _feed.asStateFlow()
 
+    private val _shortsFill = MutableStateFlow(Prefs.shortsFill(app))
+    val shortsFill: StateFlow<Boolean> = _shortsFill.asStateFlow()
     private val _feedStart = MutableStateFlow("")
     val feedStart: StateFlow<String> = _feedStart.asStateFlow()
 
@@ -119,6 +123,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     val videoPlayer: StateFlow<Player?> = player.player
     val loop: StateFlow<LoopMode> = PlaybackSettings.loop.asStateFlow()
 
+    val queue: StateFlow<RandomQueue.Snapshot?> = QueueInfo.snapshot.asStateFlow()
     fun finishOnboarding() {
         Prefs.setOnboardingDone(appContext)
         _onboardingDone.value = true
@@ -204,6 +209,17 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         _fileRequests.tryEmit(TrashRequest(item))
     }
 
+    /** Moves a video between Shorts and Videos. Survives rescans. */
+    fun setKind(item: MediaItemEntity, kind: Int) {
+        viewModelScope.launch {
+            repo.setKind(item.uri, kind)
+            // A video moved out of Shorts leaves the open feed too
+            if (kind != MediaClassifier.SHORT) {
+                _feed.value = _feed.value.filter { it.uri != item.uri }
+            }
+        }
+    }
+
     fun rename(item: MediaItemEntity, newBaseName: String) {
         _fileRequests.tryEmit(RenameRequest(item, newBaseName))
     }
@@ -237,6 +253,14 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         PlaybackSettings.loop.value = next
         Prefs.setLoopMode(appContext, next)
     }
+
+    fun toggleShortsFill() {
+        val next = !_shortsFill.value
+        _shortsFill.value = next
+        Prefs.setShortsFill(appContext, next)
+    }
+
+    fun playQueueItem(uri: String) = player.playQueueItem(uri)
 
     fun pause() = player.pause()
     fun previous() = player.previous()

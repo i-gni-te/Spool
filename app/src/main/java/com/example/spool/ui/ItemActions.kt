@@ -7,7 +7,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -26,9 +28,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.example.spool.data.MediaClassifier
 import com.example.spool.data.MediaItemEntity
 
-/** A ⋮ button with Rename and Delete. Delete moves the file to the trash. */
+/** A ⋮ button: move between Shorts and Videos (videos only), Rename, Delete (to the trash). */
 @Composable
 fun ItemMenuButton(
     item: MediaItemEntity,
@@ -57,6 +60,25 @@ fun ItemMenuButton(
             )
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (item.isVideo) {
+                val toShorts = item.kind != MediaClassifier.SHORT
+                DropdownMenuItem(
+                    text = { Text(if (toShorts) "Move to Shorts" else "Move to Videos") },
+                    leadingIcon = {
+                        Icon(
+                            if (toShorts) Icons.Filled.SmartDisplay else Icons.Filled.Movie,
+                            contentDescription = null
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        vm.setKind(
+                            item,
+                            if (toShorts) MediaClassifier.SHORT else MediaClassifier.VIDEO
+                        )
+                    }
+                )
+            }
             DropdownMenuItem(
                 text = { Text("Rename") },
                 leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },

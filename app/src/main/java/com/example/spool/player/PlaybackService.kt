@@ -18,17 +18,21 @@ import androidx.media3.session.SessionResult
 import com.example.spool.MusicApp
 import com.example.spool.data.MediaClassifier
 import com.example.spool.data.MediaItemEntity
+import com.example.spool.data.Prefs
+import com.example.spool.domain.ArtistParser
 import com.example.spool.domain.PlayScope
 import com.example.spool.domain.QueueFilter
 import com.example.spool.domain.RandomQueue
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import com.example.spool.domain.ArtistParser
+import kotlinx.coroutines.withContext
 
 @OptIn(UnstableApi::class)
 class PlaybackService : MediaSessionService() {
@@ -42,6 +46,8 @@ class PlaybackService : MediaSessionService() {
 
     /** True while the shorts feed drives playback: the current short simply loops. */
     private var feedMode = false
+
+    private val queueFile by lazy { File(filesDir, "resume_queue.json") }
 
     private data class StartResult(val count: Int, val startedVideo: Boolean)
 
@@ -68,10 +74,12 @@ class PlaybackService : MediaSessionService() {
             }
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                if (!playWhenReady &&
-                    reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM
-                ) {
-                    onItemEnded()
+                if (!playWhenReady) {
+                    if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
+                        onItemEnded()
+                    } else {
+                        savePosition() // paused: remember where
+                    }
                 }
             }
 
@@ -85,6 +93,17 @@ class PlaybackService : MediaSessionService() {
         mediaSession = MediaSession.Builder(this, player)
             .setCallback(SessionCallback())
             .build()
+
+        // Bring back what was playing last time, paused
+        restoreLast()
+
+        // Remember the position every 10 seconds while playing
+        scope.launch {
+            while (true) {
+                delay(10_000)
+                if (exoPlayer.isPlaying) savePosition()
+            }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
@@ -92,6 +111,7 @@ class PlaybackService : MediaSessionService() {
 
     // Swiped away: keep playing if music is playing, otherwise shut down
     override fun onTaskRemoved(rootIntent: Intent?) {
+        savePosition()
         val player = mediaSession?.player
         if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
             stopSelf()
@@ -99,7 +119,9 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        savePosition()
         scope.cancel()
+        QueueInfo.snapshot.value = null
         mediaSession?.run {
             player.release()
             release()
@@ -135,14 +157,70 @@ class PlaybackService : MediaSessionService() {
         if (previous != null) play(previous) else exoPlayer.seekTo(0L)
     }
 
-    private fun play(item: MediaItemEntity) {
+    /** Loads an item without starting it. */
+    private fun load(item: MediaItemEntity, positionMs: Long = 0L) {
         val current = item.toMediaItem()
         // Second item is a placeholder so ExoPlayer reports "next" as available.
         // It never plays: we pause at the end of the first item and pick the next one ourselves.
         val placeholder = current.buildUpon().setMediaId(item.uri + "#next").build()
-        exoPlayer.setMediaItems(listOf(current, placeholder))
+        exoPlayer.setMediaItems(listOf(current, placeholder), 0, positionMs)
+    }
+
+    private fun play(item: MediaItemEntity) {
+        load(item)
         exoPlayer.prepare()
         exoPlayer.play()
+        publishQueue()
+    }
+
+    /** Tells the queue screen what changed and saves the queue for next time. */
+    private fun publishQueue() {
+        val current = queue
+        QueueInfo.snapshot.value = current?.snapshot()
+        if (current == null) return // shorts feed: keep the last music queue saved
+
+        current.current?.let { Prefs.saveResume(this, it.uri, 0L) }
+        val state = current.state()
+        scope.launch(Dispatchers.IO) { ResumeStore.writeQueue(queueFile, state) }
+    }
+
+    private fun savePosition() {
+        val uri = queue?.current?.uri ?: return
+        if (exoPlayer.mediaItemCount == 0) return
+        Prefs.saveResume(this, uri, exoPlayer.currentPosition)
+    }
+
+    /** Loads the last queue and the song that was playing, paused at its last position. */
+    private fun restoreLast() {
+        scope.launch {
+            val saved = withContext(Dispatchers.IO) { ResumeStore.readQueue(queueFile) }
+                ?: return@launch
+            // The user may already have started something while this was loading
+            if (queue != null || exoPlayer.mediaItemCount > 0) return@launch
+
+            val songs = (application as MusicApp).repository.byUris(saved.all)
+            val restored = RandomQueue.restore(saved, songs) ?: return@launch
+            val current = restored.current ?: return@launch
+            if (queue != null || exoPlayer.mediaItemCount > 0) return@launch
+
+            val resume = Prefs.loadResume(this@PlaybackService)
+            val position = if (resume != null && resume.first == current.uri) resume.second else 0L
+
+            queue = restored
+            feedMode = false
+            load(current, position)
+            exoPlayer.playWhenReady = false
+            exoPlayer.prepare()
+            QueueInfo.snapshot.value = restored.snapshot()
+        }
+    }
+
+    /** The user picked a song from the queue list: play it now. */
+    private fun playFromQueue(uri: String) {
+        val current = queue ?: return
+        val item = current.find(uri) ?: return
+        feedMode = false
+        play(current.startWith(item))
     }
 
     /** Builds a new shuffled queue from a search and starts playing. */
@@ -216,6 +294,7 @@ class PlaybackService : MediaSessionService() {
                 .buildUpon()
                 .add(PLAY_QUERY_COMMAND)
                 .add(PLAY_ITEM_COMMAND)
+                .add(PLAY_QUEUE_ITEM_COMMAND)
                 .build()
             return MediaSession.ConnectionResult.accept(
                 sessionCommands,
@@ -256,6 +335,11 @@ class PlaybackService : MediaSessionService() {
                     future.set(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
 
+                ACTION_PLAY_QUEUE_ITEM -> {
+                    playFromQueue(args.getString(KEY_START_URI).orEmpty())
+                    future.set(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+
                 else -> return super.onCustomCommand(session, controller, customCommand, args)
             }
             return future
@@ -263,13 +347,13 @@ class PlaybackService : MediaSessionService() {
     }
 
     companion object {
-
-        const val KEY_ARTIST = "artist_key"
         const val ACTION_PLAY_QUERY = "com.example.spool.PLAY_QUERY"
         const val ACTION_PLAY_ITEM = "com.example.spool.PLAY_ITEM"
+        const val ACTION_PLAY_QUEUE_ITEM = "com.example.spool.PLAY_QUEUE_ITEM"
         const val KEY_QUERY = "query"
         const val KEY_START_URI = "start_uri"
         const val KEY_SCOPE = "scope"
+        const val KEY_ARTIST = "artist_key"
         const val KEY_COUNT = "count"
         const val KEY_STARTED_VIDEO = "started_video"
         const val KEY_IS_VIDEO = "is_video"
@@ -277,5 +361,6 @@ class PlaybackService : MediaSessionService() {
         private const val MAX_CONSECUTIVE_ERRORS = 5
         private val PLAY_QUERY_COMMAND = SessionCommand(ACTION_PLAY_QUERY, Bundle.EMPTY)
         private val PLAY_ITEM_COMMAND = SessionCommand(ACTION_PLAY_ITEM, Bundle.EMPTY)
+        private val PLAY_QUEUE_ITEM_COMMAND = SessionCommand(ACTION_PLAY_QUEUE_ITEM, Bundle.EMPTY)
     }
 }

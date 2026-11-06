@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
@@ -27,13 +28,19 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
+import com.example.spool.domain.RandomQueue
 import com.example.spool.player.LoopMode
 import com.example.spool.player.PlayerState
 import com.example.spool.ui.theme.Ink
@@ -44,12 +51,16 @@ fun NowPlayingScreen(
     player: Player?,
     state: PlayerState,
     loop: LoopMode,
+    queue: RandomQueue.Snapshot?,
     onCycleLoop: () -> Unit,
     onPrevious: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
+    onPlayQueueItem: (String) -> Unit,
     onClose: () -> Unit
 ) {
+    var showQueue by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -110,6 +121,7 @@ fun NowPlayingScreen(
         }
         Spacer(Modifier.height(8.dp))
 
+        // Loop on the left, queue list on the right
         Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
@@ -137,7 +149,21 @@ fun NowPlayingScreen(
             IconButton(onClick = onNext, modifier = Modifier.size(56.dp)) {
                 Icon(Icons.Filled.SkipNext, "Next", Modifier.size(36.dp))
             }
-            Spacer(Modifier.size(48.dp)) // balances the loop button on the left
+            IconButton(onClick = { showQueue = true }) {
+                Icon(
+                    Icons.Filled.Menu,
+                    contentDescription = "Queue",
+                    tint = Color.White.copy(alpha = 0.6f)
+                )
+            }
         }
+    }
+
+    if (showQueue) {
+        QueueSheet(
+            snapshot = queue,
+            onPlay = onPlayQueueItem,
+            onDismiss = { showQueue = false }
+        )
     }
 }

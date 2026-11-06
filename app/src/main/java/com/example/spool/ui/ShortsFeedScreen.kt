@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
@@ -39,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -62,7 +65,9 @@ fun ShortsFeedScreen(
     startUri: String,
     player: Player?,
     state: PlayerState,
+    fill: Boolean,
     vm: MusicViewModel,
+    onToggleFill: () -> Unit,
     onTogglePlay: () -> Unit,
     onPlayItem: (String) -> Unit,
     onClose: () -> Unit
@@ -95,6 +100,7 @@ fun ShortsFeedScreen(
             ShortPage(
                 item = item,
                 player = player,
+                fill = fill,
                 // Show the live video only once the player has switched to this short
                 showVideo = player != null && pagerState.settledPage == page && state.uri == item.uri,
                 isPlaying = state.isPlaying,
@@ -113,7 +119,7 @@ fun ShortsFeedScreen(
                 )
         )
 
-        // Top bar
+        // Top bar: minimize on the left; fit/fill and the menu on the right
         Row(
             Modifier
                 .align(Alignment.TopStart)
@@ -131,6 +137,13 @@ fun ShortsFeedScreen(
                 )
             }
             Spacer(Modifier.weight(1f))
+            IconButton(onClick = onToggleFill) {
+                Icon(
+                    if (fill) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
+                    contentDescription = if (fill) "Fit to screen" else "Fill screen",
+                    tint = Color.White
+                )
+            }
             ItemMenuButton(item = current, vm = vm, tint = Color.White)
         }
 
@@ -168,6 +181,7 @@ fun ShortsFeedScreen(
 private fun ShortPage(
     item: MediaItemEntity,
     player: Player?,
+    fill: Boolean,
     showVideo: Boolean,
     isPlaying: Boolean,
     onTogglePlay: () -> Unit
@@ -187,10 +201,11 @@ private fun ShortPage(
             isVideo = true,
             modifier = Modifier.fillMaxSize(),
             corner = 0.dp,
-            sizePx = 720
+            sizePx = 720,
+            contentScale = if (fill) ContentScale.Crop else ContentScale.Fit
         )
         if (showVideo && player != null) {
-            ShortSurface(player, Modifier.fillMaxSize())
+            ShortSurface(player, fill, Modifier.fillMaxSize())
         }
         if (showVideo && !isPlaying) {
             Icon(
@@ -203,10 +218,10 @@ private fun ShortPage(
     }
 }
 
-/** Video view that fills the screen for vertical clips and fits wide ones. */
+/** Fits the whole picture by default; in fill mode, vertical clips fill the screen. */
 @OptIn(UnstableApi::class)
 @Composable
-private fun ShortSurface(videoPlayer: Player, modifier: Modifier = Modifier) {
+private fun ShortSurface(videoPlayer: Player, fill: Boolean, modifier: Modifier = Modifier) {
     var portrait by remember {
         mutableStateOf(videoPlayer.videoSize.height >= videoPlayer.videoSize.width)
     }
@@ -229,7 +244,7 @@ private fun ShortSurface(videoPlayer: Player, modifier: Modifier = Modifier) {
         update = { view ->
             view.player = videoPlayer
             view.resizeMode =
-                if (portrait) AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                if (fill && portrait) AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 else AspectRatioFrameLayout.RESIZE_MODE_FIT
         },
         onRelease = { it.player = null }

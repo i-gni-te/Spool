@@ -74,4 +74,62 @@ class RandomQueueTest {
         q.previous()
         assertEquals(true, q.hasNextInRound())
     }
+    @Test
+    fun `snapshot splits current, remaining and played`() {
+        val q = RandomQueue(songs(5), Random(8))
+        assertEquals(0, q.snapshot().played.size)
+        repeat(3) { q.next() }
+        val s = q.snapshot()
+        assertEquals(q.current, s.current)
+        assertEquals(2, s.played.size)
+        assertEquals(2, s.remaining.size)
+        assertEquals(5, s.total)
+    }
+
+    @Test
+    fun `starting with a chosen song moves it out of remaining`() {
+        val list = songs(4)
+        val q = RandomQueue(list, Random(9))
+        q.startWith(list[2])
+        val s = q.snapshot()
+        assertEquals(list[2], s.current)
+        assertEquals(3, s.remaining.size)
+        assertEquals(false, s.remaining.contains(list[2]))
+    }
+
+    @Test
+    fun `a saved queue restores with the same current, remaining and played songs`() {
+        val list = songs(6)
+        val q = RandomQueue(list, Random(10))
+        repeat(3) { q.next() }
+        val before = q.snapshot()
+
+        val restored = RandomQueue.restore(q.state(), list, Random(11))!!
+        val after = restored.snapshot()
+        assertEquals(before.current, after.current)
+        assertEquals(before.remaining, after.remaining)
+        assertEquals(before.played.map { it.uri }, after.played.map { it.uri })
+    }
+
+    @Test
+    fun `restore drops songs that no longer exist but keeps the current one`() {
+        val list = songs(5)
+        val q = RandomQueue(list, Random(12))
+        repeat(2) { q.next() }
+        val current = q.current!!
+        val gone = list.first { it.uri != current.uri }
+
+        val restored = RandomQueue.restore(q.state(), list.filter { it.uri != gone.uri }, Random(13))!!
+        assertEquals(current, restored.current)
+        assertEquals(false, restored.snapshot().remaining.contains(gone))
+    }
+
+    @Test
+    fun `restore gives nothing when the current song is gone`() {
+        val list = songs(4)
+        val q = RandomQueue(list, Random(14))
+        q.next()
+        val current = q.current!!
+        assertEquals(null, RandomQueue.restore(q.state(), list.filter { it.uri != current.uri }))
+    }
 }

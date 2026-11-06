@@ -80,7 +80,8 @@ fun MediaThumb(
     corner: Dp = 14.dp,
     sizePx: Int = 360,
     badge: String? = null,
-    onClick: (() -> Unit)? = null
+    onClick: (() -> Unit)? = null,
+    contentScale: ContentScale = ContentScale.Crop
 ) {
     val context = LocalContext.current
     val bitmap by produceState<Bitmap?>(ThumbCache.get(uri), uri) {
@@ -106,7 +107,7 @@ fun MediaThumb(
                 bitmap = bmp.asImageBitmap(),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
+                contentScale = contentScale
             )
         } else {
             Cover(seed = seed, modifier = Modifier.fillMaxSize(), isVideo = isVideo, corner = corner)
