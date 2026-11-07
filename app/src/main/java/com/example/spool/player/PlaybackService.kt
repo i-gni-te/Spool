@@ -2,6 +2,8 @@ package com.example.spool.player
 
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
+import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -31,8 +33,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.media3.session.DefaultMediaNotificationProvider
+import com.example.spool.R
 
 @OptIn(UnstableApi::class)
 class PlaybackService : MediaSessionService() {
@@ -47,9 +52,16 @@ class PlaybackService : MediaSessionService() {
     /** True while the shorts feed drives playback: the current short simply loops. */
     private var feedMode = false
 
+    // Counting plays: an item counts once it has really been listened to
+    private var listenedMs = 0L
+    private var listenedUri: String? = null
+    private var countedUri: String? = null
+
     private val queueFile by lazy { File(filesDir, "resume_queue.json") }
 
     private data class StartResult(val count: Int, val startedVideo: Boolean)
+
+    private fun wantsShuffle() = PlaybackSettings.loop.value == LoopMode.SHUFFLE
 
     override fun onCreate() {
         super.onCreate()
@@ -63,6 +75,7 @@ class PlaybackService : MediaSessionService() {
                 /* handleAudioFocus = */ true
             )
             .setHandleAudioBecomingNoisy(true) // pause when headphones unplug
+            .setWakeMode(C.WAKE_MODE_LOCAL)    // keep the phone awake while playing
             .build()
 
         // Pause (instead of advancing) when an item ends, so we decide what comes next
@@ -94,16 +107,16 @@ class PlaybackService : MediaSessionService() {
             .setCallback(SessionCallback())
             .build()
 
+        // Our own small icon in the notification
+        setMediaNotificationProvider(
+            DefaultMediaNotificationProvider.Builder(this).build().also {
+                it.setSmallIcon(R.drawable.ic_notification)
+            }
+        )
+
         // Bring back what was playing last time, paused
         restoreLast()
-
-        // Remember the position every 10 seconds while playing
-        scope.launch {
-            while (true) {
-                delay(10_000)
-                if (exoPlayer.isPlaying) savePosition()
-            }
-        }
+        startBackgroundLoops()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
@@ -130,8 +143,92 @@ class PlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
-    /** An item finished on its own: loop it, move on, or stop at the end of the queue. */
+    private fun startBackgroundLoops() {
+        // The mode button: switch the running queue between in-order and shuffle
+        scope.launch {
+            PlaybackSettings.loop.collect { mode ->
+                val current = queue ?: return@collect
+                current.shuffle = mode == LoopMode.SHUFFLE
+                publishQueue()
+            }
+        }
+
+        // Remember the position every 10 seconds while playing
+        scope.launch {
+            while (true) {
+                delay(10_000)
+                if (exoPlayer.isPlaying) savePosition()
+            }
+        }
+
+        // Count plays
+        scope.launch {
+            while (true) {
+                delay(1_000)
+                trackListening()
+            }
+        }
+
+        // Sleep timer: wait, fade out, pause. A new timer, or turning it off, cancels this.
+        scope.launch {
+            SleepTimer.state.collectLatest { sleep ->
+                if (sleep.endsAtMs <= 0L) return@collectLatest
+                while (true) {
+                    val remaining = sleep.endsAtMs - SystemClock.elapsedRealtime()
+                    if (remaining <= FADE_MS) break
+                    delay(minOf(remaining - FADE_MS, 30_000L))
+                }
+                fadeOutAndPause()
+                SleepTimer.clear()
+            }
+        }
+    }
+
+    private suspend fun fadeOutAndPause() {
+        val steps = 20
+        try {
+            for (i in 1..steps) {
+                exoPlayer.volume = 1f - i / steps.toFloat()
+                delay(FADE_MS / steps)
+            }
+            exoPlayer.pause()
+        } finally {
+            exoPlayer.volume = 1f
+        }
+    }
+
+    private fun trackListening() {
+        val uri = exoPlayer.currentMediaItem?.mediaId?.removeSuffix("#next")
+        if (uri != listenedUri) {
+            listenedUri = uri
+            listenedMs = 0L
+        }
+        if (uri == null || uri == countedUri || !exoPlayer.isPlaying) return
+        // Shorts loop forever, so they don't count as plays
+        if (exoPlayer.mediaMetadata.extras?.getBoolean(KEY_IS_SHORT, false) == true) return
+
+        listenedMs += 1_000
+        val duration = exoPlayer.duration
+        val needed = if (duration > 0) minOf(LISTEN_MS, duration / 2) else LISTEN_MS
+        if (listenedMs >= needed) {
+            countedUri = uri
+            scope.launch(Dispatchers.IO) {
+                (application as MusicApp).repository.recordPlay(uri)
+            }
+        }
+    }
+
+    /** An item finished on its own: stop for the sleep timer, repeat it, or move on. */
     private fun onItemEnded() {
+        countedUri = null
+        listenedMs = 0L
+
+        // Sleep timer set to "end of this song": stop here, with the next song ready
+        if (SleepTimer.state.value.endOfTrack) {
+            SleepTimer.clear()
+            cueNext()
+            return
+        }
         if (feedMode) {
             exoPlayer.seekTo(0L)
             exoPlayer.play()
@@ -142,10 +239,21 @@ class PlaybackService : MediaSessionService() {
                 exoPlayer.seekTo(0L)
                 exoPlayer.play()
             }
-            LoopMode.ALL -> playNext()
-            LoopMode.OFF ->
-                if (queue?.hasNextInRound() == true) playNext() else exoPlayer.seekTo(0L)
+            LoopMode.ALL, LoopMode.SHUFFLE -> playNext()
         }
+    }
+
+    /** Lines up the next song without playing it. */
+    private fun cueNext() {
+        val item = queue?.next()
+        if (item == null) {
+            exoPlayer.seekTo(0L)
+            return
+        }
+        load(item)
+        exoPlayer.playWhenReady = false
+        exoPlayer.prepare()
+        publishQueue()
     }
 
     private fun playNext() {
@@ -164,9 +272,32 @@ class PlaybackService : MediaSessionService() {
         // It never plays: we pause at the end of the first item and pick the next one ourselves.
         val placeholder = current.buildUpon().setMediaId(item.uri + "#next").build()
         exoPlayer.setMediaItems(listOf(current, placeholder), 0, positionMs)
+        attachArtwork(item)
+    }
+
+    /** Loads cover art off the main thread, then adds it to the playing item for the notification. */
+    private fun attachArtwork(item: MediaItemEntity) {
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) {
+                Artwork.forItem(applicationContext, item.uri, item.artist, item.title)
+            }
+            // The song may have changed while the art was loading
+            val playing = exoPlayer.currentMediaItem ?: return@launch
+            if (playing.mediaId != item.uri) return@launch
+            val withArt = playing.buildUpon()
+                .setMediaMetadata(
+                    playing.mediaMetadata.buildUpon()
+                        .setArtworkData(bytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                        .build()
+                )
+                .build()
+            exoPlayer.replaceMediaItem(exoPlayer.currentMediaItemIndex, withArt)
+        }
     }
 
     private fun play(item: MediaItemEntity) {
+        listenedMs = 0L
+        countedUri = null
         load(item)
         exoPlayer.prepare()
         exoPlayer.play()
@@ -198,7 +329,8 @@ class PlaybackService : MediaSessionService() {
             // The user may already have started something while this was loading
             if (queue != null || exoPlayer.mediaItemCount > 0) return@launch
 
-            val songs = (application as MusicApp).repository.byUris(saved.all)
+            val uris = (saved.all + saved.unplayed + saved.history + saved.upNext).distinct()
+            val songs = (application as MusicApp).repository.byUris(uris)
             val restored = RandomQueue.restore(saved, songs) ?: return@launch
             val current = restored.current ?: return@launch
             if (queue != null || exoPlayer.mediaItemCount > 0) return@launch
@@ -206,6 +338,7 @@ class PlaybackService : MediaSessionService() {
             val resume = Prefs.loadResume(this@PlaybackService)
             val position = if (resume != null && resume.first == current.uri) resume.second else 0L
 
+            restored.shuffle = wantsShuffle() // the button's current setting wins
             queue = restored
             feedMode = false
             load(current, position)
@@ -223,7 +356,27 @@ class PlaybackService : MediaSessionService() {
         play(current.startWith(item))
     }
 
-    /** Builds a new shuffled queue from a search and starts playing. */
+    /** "Play next" and "Add to queue". With nothing playing, the song just starts. */
+    private suspend fun enqueue(uri: String, atFront: Boolean) {
+        if (uri.isEmpty()) return
+        val item = (application as MusicApp).repository.byUri(uri) ?: return
+        val current = queue
+        val musicIsPlaying = current != null && !feedMode &&
+                exoPlayer.mediaMetadata.extras?.getBoolean(KEY_IS_VIDEO, false) != true
+        if (!musicIsPlaying) {
+            startQuery(query = "", startUri = uri, playScope = PlayScope.SONGS, artistKey = null)
+            return
+        }
+        current?.enqueue(item, atFront)
+        publishQueue()
+        Toast.makeText(
+            this,
+            if (atFront) "Playing next" else "Added to queue",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    /** Builds a new queue from a search and starts playing. */
     private suspend fun startQuery(
         query: String,
         startUri: String?,
@@ -241,7 +394,7 @@ class PlaybackService : MediaSessionService() {
         val plan = QueueFilter.plan(results, playScope, first)
         if (plan.pool.isEmpty()) return StartResult(0, false)
 
-        val newQueue = RandomQueue(plan.pool)
+        val newQueue = RandomQueue(plan.pool, shuffle = wantsShuffle())
         queue = newQueue
         consecutiveErrors = 0
         val anchor = plan.anchor
@@ -295,6 +448,7 @@ class PlaybackService : MediaSessionService() {
                 .add(PLAY_QUERY_COMMAND)
                 .add(PLAY_ITEM_COMMAND)
                 .add(PLAY_QUEUE_ITEM_COMMAND)
+                .add(ENQUEUE_COMMAND)
                 .build()
             return MediaSession.ConnectionResult.accept(
                 sessionCommands,
@@ -340,6 +494,14 @@ class PlaybackService : MediaSessionService() {
                     future.set(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
 
+                ACTION_ENQUEUE -> scope.launch {
+                    enqueue(
+                        uri = args.getString(KEY_START_URI).orEmpty(),
+                        atFront = args.getBoolean(KEY_AT_FRONT, false)
+                    )
+                    future.set(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+
                 else -> return super.onCustomCommand(session, controller, customCommand, args)
             }
             return future
@@ -350,17 +512,22 @@ class PlaybackService : MediaSessionService() {
         const val ACTION_PLAY_QUERY = "com.example.spool.PLAY_QUERY"
         const val ACTION_PLAY_ITEM = "com.example.spool.PLAY_ITEM"
         const val ACTION_PLAY_QUEUE_ITEM = "com.example.spool.PLAY_QUEUE_ITEM"
+        const val ACTION_ENQUEUE = "com.example.spool.ENQUEUE"
         const val KEY_QUERY = "query"
         const val KEY_START_URI = "start_uri"
         const val KEY_SCOPE = "scope"
         const val KEY_ARTIST = "artist_key"
+        const val KEY_AT_FRONT = "at_front"
         const val KEY_COUNT = "count"
         const val KEY_STARTED_VIDEO = "started_video"
         const val KEY_IS_VIDEO = "is_video"
         const val KEY_IS_SHORT = "is_short"
         private const val MAX_CONSECUTIVE_ERRORS = 5
+        private const val FADE_MS = 10_000L
+        private const val LISTEN_MS = 30_000L
         private val PLAY_QUERY_COMMAND = SessionCommand(ACTION_PLAY_QUERY, Bundle.EMPTY)
         private val PLAY_ITEM_COMMAND = SessionCommand(ACTION_PLAY_ITEM, Bundle.EMPTY)
         private val PLAY_QUEUE_ITEM_COMMAND = SessionCommand(ACTION_PLAY_QUEUE_ITEM, Bundle.EMPTY)
+        private val ENQUEUE_COMMAND = SessionCommand(ACTION_ENQUEUE, Bundle.EMPTY)
     }
 }

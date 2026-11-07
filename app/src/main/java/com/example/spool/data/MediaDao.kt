@@ -56,4 +56,24 @@ interface MediaDao {
 
     @Query("DELETE FROM kind_overrides WHERE uri IN (:uris)")
     suspend fun deleteOverrides(uris: List<String>)
+
+    @Query("INSERT OR IGNORE INTO play_stats (uri, plays, lastPlayedAt) VALUES (:uri, 0, 0)")
+    suspend fun ensureStat(uri: String)
+
+    @Query("UPDATE play_stats SET plays = plays + 1, lastPlayedAt = :now WHERE uri = :uri")
+    suspend fun bumpStat(uri: String, now: Long)
+
+    @Query(
+        "SELECT m.* FROM media_items m JOIN play_stats s ON s.uri = m.uri " +
+                "WHERE s.lastPlayedAt > 0 AND m.kind != 2 " +
+                "ORDER BY s.lastPlayedAt DESC LIMIT :limit"
+    )
+    fun recentlyPlayed(limit: Int): Flow<List<MediaItemEntity>>
+
+    @Query(
+        "SELECT m.*, s.plays AS plays FROM media_items m JOIN play_stats s ON s.uri = m.uri " +
+                "WHERE s.plays > 0 AND m.kind != 2 " +
+                "ORDER BY s.plays DESC, s.lastPlayedAt DESC LIMIT :limit"
+    )
+    fun mostPlayed(limit: Int): Flow<List<PlayedTrack>>
 }

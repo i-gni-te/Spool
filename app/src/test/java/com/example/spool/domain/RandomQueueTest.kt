@@ -132,4 +132,46 @@ class RandomQueueTest {
         val current = q.current!!
         assertEquals(null, RandomQueue.restore(q.state(), list.filter { it.uri != current.uri }))
     }
+    @Test
+    fun `in order mode songs follow the sorted list and wrap around`() {
+        val list = songs(4)
+        val q = RandomQueue(list, Random(1), shuffle = false)
+        q.startWith(list[1])
+        assertEquals(listOf("uri3", "uri4", "uri1", "uri2"), List(4) { q.next()!!.uri })
+    }
+
+    @Test
+    fun `switching to shuffle mid-queue never repeats songs already played`() {
+        val list = songs(6)
+        val q = RandomQueue(list, Random(2), shuffle = false)
+        q.startWith(list[0])
+        repeat(2) { q.next() } // plays uri2 and uri3 in order
+        q.shuffle = true
+        val rest = List(3) { q.next()!!.uri }
+        assertEquals(setOf("uri4", "uri5", "uri6"), rest.toSet())
+    }
+
+    @Test
+    fun `play next jumps the line and add to queue waits at the end`() {
+        val list = songs(5)
+        val q = RandomQueue(list.take(3), Random(3), shuffle = false)
+        q.startWith(list[0])
+        q.enqueue(list[4], atFront = false)
+        q.enqueue(list[3], atFront = true)
+        assertEquals("uri4", q.next()!!.uri)
+        assertEquals("uri5", q.next()!!.uri)
+        assertEquals("uri2", q.next()!!.uri) // back to the list, after where it left off
+    }
+
+    @Test
+    fun `a saved queue keeps added songs and the shuffle setting`() {
+        val list = songs(4)
+        val q = RandomQueue(list.take(3), Random(4), shuffle = false)
+        q.startWith(list[0])
+        q.enqueue(list[3], atFront = false)
+
+        val restored = RandomQueue.restore(q.state(), list, Random(5))!!
+        assertEquals(false, restored.shuffle)
+        assertEquals(listOf(list[3]), restored.snapshot().queuedByUser)
+    }
 }

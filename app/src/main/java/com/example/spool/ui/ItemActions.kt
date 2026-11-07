@@ -5,10 +5,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -31,7 +33,10 @@ import androidx.compose.ui.unit.dp
 import com.example.spool.data.MediaClassifier
 import com.example.spool.data.MediaItemEntity
 
-/** A ⋮ button: move between Shorts and Videos (videos only), Rename, Delete (to the trash). */
+/**
+ * A ⋮ button. Songs: Play next, Add to queue. Videos: move between Shorts and Videos.
+ * Everything: Rename, and Delete (to the trash).
+ */
 @Composable
 fun ItemMenuButton(
     item: MediaItemEntity,
@@ -60,6 +65,24 @@ fun ItemMenuButton(
             )
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (!item.isVideo) {
+                DropdownMenuItem(
+                    text = { Text("Play next") },
+                    leadingIcon = { Icon(Icons.Filled.SkipNext, contentDescription = null) },
+                    onClick = {
+                        expanded = false
+                        vm.playNext(item)
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Add to queue") },
+                    leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
+                    onClick = {
+                        expanded = false
+                        vm.addToQueue(item)
+                    }
+                )
+            }
             if (item.isVideo) {
                 val toShorts = item.kind != MediaClassifier.SHORT
                 DropdownMenuItem(

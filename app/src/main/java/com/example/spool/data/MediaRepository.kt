@@ -15,6 +15,15 @@ class MediaRepository(
         return if (q.isEmpty()) dao.all() else dao.search(q)
     }
 
+    fun recentlyPlayed(limit: Int = 12): Flow<List<MediaItemEntity>> = dao.recentlyPlayed(limit)
+
+    fun mostPlayed(limit: Int = 12): Flow<List<PlayedTrack>> = dao.mostPlayed(limit)
+
+    suspend fun recordPlay(uri: String) {
+        dao.ensureStat(uri)
+        dao.bumpStat(uri, System.currentTimeMillis())
+    }
+
     suspend fun searchOnce(query: String): List<MediaItemEntity> {
         val q = TextNormalizer.normalize(query)
         return if (q.isEmpty()) dao.allOnce() else dao.searchOnce(q)

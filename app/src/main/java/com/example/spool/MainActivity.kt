@@ -203,6 +203,7 @@ fun SpoolRoot(
 
     val queue by vm.queue.collectAsState()
     val shortsFill by vm.shortsFill.collectAsState()
+    val sleep by vm.sleep.collectAsState()
 
     val playerState by vm.playerState.collectAsState()
     val videoPlayer by vm.videoPlayer.collectAsState()
@@ -300,7 +301,11 @@ fun SpoolRoot(
             onPrevious = vm::previous,
             onToggle = vm::togglePlayPause,
             onNext = vm::next,
-            onClose = { nowPlayingOpen = false }
+            onClose = { nowPlayingOpen = false },
+            sleep = sleep,
+            onSleepMinutes = vm::setSleepMinutes,
+            onSleepEndOfTrack = vm::setSleepEndOfTrack,
+            onSleepOff = vm::clearSleep
         )
 
         else -> Scaffold(

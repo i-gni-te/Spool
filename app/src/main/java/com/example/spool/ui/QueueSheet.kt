@@ -54,6 +54,10 @@ fun QueueSheet(
                 modifier = Modifier.padding(24.dp)
             )
         } else {
+            val play: (MediaItemEntity) -> Unit = { song ->
+                onPlay(song.uri)
+                onDismiss()
+            }
             LazyColumn(
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp)
             ) {
@@ -61,8 +65,13 @@ fun QueueSheet(
                     Column(Modifier.padding(bottom = 8.dp)) {
                         Text("Queue", style = MaterialTheme.typography.headlineMedium)
                         Text(
-                            "${snapshot.total} songs. Shuffle picks the next one at random. " +
-                                    "Tap any song to play it now.",
+                            if (snapshot.shuffled) {
+                                "${snapshot.total} songs. Shuffle picks the next one at random. " +
+                                        "Tap any song to play it now."
+                            } else {
+                                "${snapshot.total} songs, playing in order. " +
+                                        "Tap any song to play it now."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -72,23 +81,34 @@ fun QueueSheet(
                 item { SectionLabel("Now playing") }
                 item { QueueRow(now, current = true, dim = false, onClick = onDismiss) }
 
+                if (snapshot.queuedByUser.isNotEmpty()) {
+                    item { SectionLabel("Queued by you · ${snapshot.queuedByUser.size}") }
+                    items(snapshot.queuedByUser, key = { "q:" + it.uri }) { song ->
+                        QueueRow(song, current = false, dim = false) { play(song) }
+                    }
+                }
+
                 if (snapshot.remaining.isNotEmpty()) {
-                    item { SectionLabel("Still to play · ${snapshot.remaining.size}") }
+                    item {
+                        SectionLabel(
+                            (if (snapshot.shuffled) "Still to play" else "Up next, in order") +
+                                    " · ${snapshot.remaining.size}"
+                        )
+                    }
                     items(snapshot.remaining, key = { "r:" + it.uri }) { song ->
-                        QueueRow(song, current = false, dim = false) {
-                            onPlay(song.uri)
-                            onDismiss()
-                        }
+                        QueueRow(song, current = false, dim = false) { play(song) }
                     }
                 }
 
                 if (snapshot.played.isNotEmpty()) {
-                    item { SectionLabel("Already played · ${snapshot.played.size}") }
+                    item {
+                        SectionLabel(
+                            (if (snapshot.shuffled) "Already played" else "Earlier in the list") +
+                                    " · ${snapshot.played.size}"
+                        )
+                    }
                     items(snapshot.played, key = { "p:" + it.uri }) { song ->
-                        QueueRow(song, current = false, dim = true) {
-                            onPlay(song.uri)
-                            onDismiss()
-                        }
+                        QueueRow(song, current = false, dim = true) { play(song) }
                     }
                 }
             }

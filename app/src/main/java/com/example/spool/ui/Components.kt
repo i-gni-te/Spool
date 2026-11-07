@@ -198,7 +198,7 @@ fun PlayPill(
     }
 }
 
-/** One button cycling Off, Loop queue and Loop one. */
+/** One button cycling Loop all, Loop one and Shuffle. */
 @Composable
 fun LoopButton(
     mode: LoopMode,
@@ -208,17 +208,21 @@ fun LoopButton(
 ) {
     IconButton(onClick = onClick, modifier = modifier) {
         Icon(
-            imageVector = if (mode == LoopMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
-            contentDescription = when (mode) {
-                LoopMode.OFF -> "Loop off"
-                LoopMode.ALL -> "Loop queue"
-                LoopMode.ONE -> "Loop one"
+            imageVector = when (mode) {
+                LoopMode.ALL -> Icons.Filled.Repeat
+                LoopMode.ONE -> Icons.Filled.RepeatOne
+                LoopMode.SHUFFLE -> Icons.Filled.Shuffle
             },
-            tint = if (mode == LoopMode.OFF) idleTint else Ember
+            contentDescription = when (mode) {
+                LoopMode.ALL -> "Loop all"
+                LoopMode.ONE -> "Loop one"
+                LoopMode.SHUFFLE -> "Shuffle"
+            },
+            // Loop all is the calm default; the other two light up
+            tint = if (mode == LoopMode.ALL) idleTint else Ember
         )
     }
 }
-
 fun formatDuration(ms: Long): String {
     val totalSeconds = (ms / 1000).coerceAtLeast(0)
     val minutes = totalSeconds / 60

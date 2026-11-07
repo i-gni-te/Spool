@@ -61,6 +61,8 @@ fun HomeScreen(
     val message by vm.message.collectAsState()
     val artists by vm.artists.collectAsState()
     val suggestions by vm.suggestions.collectAsState()
+    val recent by vm.recentlyPlayed.collectAsState()
+    val mostPlayed by vm.mostPlayed.collectAsState()
     val focus = LocalFocusManager.current
 
     val typing = query.isNotBlank()
@@ -148,6 +150,34 @@ fun HomeScreen(
 
         message?.let { text ->
             fullWidth { Text(text, color = MaterialTheme.colorScheme.error) }
+        }
+
+        // Shelves of what you actually listen to
+        if (!typing && recent.isNotEmpty()) {
+            fullWidth {
+                TrackShelf(
+                    title = "Recently played",
+                    tracks = recent.map { ShelfTrack(it, it.artist) },
+                    onPlay = { uri ->
+                        vm.play(startUri = uri)
+                        focus.clearFocus()
+                    }
+                )
+            }
+        }
+        if (!typing && mostPlayed.isNotEmpty()) {
+            fullWidth {
+                TrackShelf(
+                    title = "Most played",
+                    tracks = mostPlayed.map {
+                        ShelfTrack(it.item, if (it.plays == 1) "1 play" else "${it.plays} plays")
+                    },
+                    onPlay = { uri ->
+                        vm.play(startUri = uri)
+                        focus.clearFocus()
+                    }
+                )
+            }
         }
 
         // Section header

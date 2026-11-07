@@ -35,6 +35,11 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import com.example.spool.domain.RandomQueue
 import com.example.spool.player.QueueInfo
+import com.example.spool.data.PlayedTrack
+import com.example.spool.player.SleepState
+import com.example.spool.player.SleepTimer
+import android.widget.Toast
+import com.example.spool.domain.MediaOrder
 
 /** A file change that needs the user's permission, shown by the system as a dialog. */
 sealed interface FileRequest {
@@ -64,17 +69,25 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val songs: StateFlow<List<MediaItemEntity>> = found
-        .map { list -> list.filter { it.kind == MediaClassifier.SONG } }
+        .map { list ->
+            list.filter { it.kind == MediaClassifier.SONG }.sortedWith(MediaOrder.byName)
+        }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val videos: StateFlow<List<MediaItemEntity>> = found
-        .map { list -> list.filter { it.kind == MediaClassifier.VIDEO } }
+        .map { list ->
+            list.filter { it.kind == MediaClassifier.VIDEO }.sortedWith(MediaOrder.byName)
+        }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val shorts: StateFlow<List<MediaItemEntity>> = found
-        .map { list -> list.filter { it.kind == MediaClassifier.SHORT } }
+        .map { list ->
+            list.filter { it.kind == MediaClassifier.SHORT }.sortedWith(MediaOrder.byName)
+        }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
     val artists: StateFlow<List<ArtistEntry>> = repo.search("")
         .map { ArtistIndex.build(it) }
         .flowOn(Dispatchers.Default)
@@ -94,6 +107,11 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     val libraryCount: StateFlow<Int> = repo.count
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
+    val recentlyPlayed: StateFlow<List<MediaItemEntity>> = repo.recentlyPlayed(12)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val mostPlayed: StateFlow<List<PlayedTrack>> = repo.mostPlayed(12)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val _scanning = MutableStateFlow(false)
     val scanning: StateFlow<Boolean> = _scanning.asStateFlow()
 
@@ -124,6 +142,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     val loop: StateFlow<LoopMode> = PlaybackSettings.loop.asStateFlow()
 
     val queue: StateFlow<RandomQueue.Snapshot?> = QueueInfo.snapshot.asStateFlow()
+    val sleep: StateFlow<SleepState> = SleepTimer.state.asStateFlow()
     fun finishOnboarding() {
         Prefs.setOnboardingDone(appContext)
         _onboardingDone.value = true
@@ -150,8 +169,16 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** A tapped item ([startUri]) decides what kind of queue it is; otherwise [scope] does. */
+    /**
+     * A tapped item ([startUri]) plays in order, so shuffle switches off. The shuffle buttons
+     * and Enter-to-play have no item and switch shuffle on.
+     */
     fun play(startUri: String? = null, scope: PlayScope = PlayScope.AUTO) {
+        if (startUri == null) {
+            setMode(LoopMode.SHUFFLE)
+        } else if (PlaybackSettings.loop.value == LoopMode.SHUFFLE) {
+            setMode(LoopMode.ALL)
+        }
         player.playQuery(_query.value, startUri, scope) { count, startedVideo ->
             _message.value = when {
                 count < 0 -> "Player is still starting, try again in a moment"
@@ -164,6 +191,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Plays exactly this artist. The search text on screen stays as it is. */
     fun playArtist(entry: ArtistEntry) {
+        setMode(LoopMode.SHUFFLE)
         player.playQuery(entry.name, null, PlayScope.AUTO, entry.key) { count, startedVideo ->
             _message.value = when {
                 count < 0 -> "Player is still starting, try again in a moment"
@@ -248,11 +276,31 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun setMode(mode: LoopMode) {
+        PlaybackSettings.loop.value = mode
+        Prefs.setLoopMode(appContext, mode)
+    }
+
     fun cycleLoop() {
         val next = PlaybackSettings.loop.value.next()
-        PlaybackSettings.loop.value = next
-        Prefs.setLoopMode(appContext, next)
+        setMode(next)
+        Toast.makeText(
+            appContext,
+            when (next) {
+                LoopMode.ALL -> "Loop all"
+                LoopMode.ONE -> "Loop one"
+                LoopMode.SHUFFLE -> "Shuffle"
+            },
+            Toast.LENGTH_SHORT
+        ).show()
     }
+
+    fun playNext(item: MediaItemEntity) = player.enqueue(item.uri, atFront = true)
+    fun addToQueue(item: MediaItemEntity) = player.enqueue(item.uri, atFront = false)
+
+    fun setSleepMinutes(minutes: Int) = SleepTimer.startMinutes(minutes)
+    fun setSleepEndOfTrack() = SleepTimer.startEndOfTrack()
+    fun clearSleep() = SleepTimer.clear()
 
     fun toggleShortsFill() {
         val next = !_shortsFill.value

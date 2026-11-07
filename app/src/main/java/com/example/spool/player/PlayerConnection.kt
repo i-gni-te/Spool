@@ -117,6 +117,18 @@ class PlayerConnection(context: Context) {
             args
         )
     }
+    /** "Play next" (atFront = true) or "Add to queue" for a song. */
+    fun enqueue(uri: String, atFront: Boolean) {
+        val c = controller ?: return
+        val args = Bundle().apply {
+            putString(PlaybackService.KEY_START_URI, uri)
+            putBoolean(PlaybackService.KEY_AT_FRONT, atFront)
+        }
+        c.sendCustomCommand(
+            SessionCommand(PlaybackService.ACTION_ENQUEUE, Bundle.EMPTY),
+            args
+        )
+    }
 
     fun togglePlayPause() {
         val c = controller ?: return

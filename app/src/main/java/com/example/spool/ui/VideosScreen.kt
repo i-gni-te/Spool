@@ -1,5 +1,6 @@
 package com.example.spool.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +36,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.spool.data.MediaItemEntity
 import com.example.spool.data.MediaScanner
+import com.example.spool.domain.PlayScope
+import com.example.spool.ui.theme.Ember
 
 @Composable
 fun VideosScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
@@ -43,14 +46,15 @@ fun VideosScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
     val shorts by vm.shorts.collectAsState()
     val total by vm.libraryCount.collectAsState()
     val message by vm.message.collectAsState()
+    val playing by vm.playerState.collectAsState()
     val focus = LocalFocusManager.current
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item { Text("Videos", style = MaterialTheme.typography.headlineMedium) }
+        item { ScreenHeader("Videos", "${videos.size + shorts.size} videos") }
         item {
             SearchField(
                 query = query,
@@ -65,7 +69,7 @@ fun VideosScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
                 Text(
                     if (total == 0) "No videos found yet" else "No videos match",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp)
+                    modifier = Modifier.padding(top = 8.dp, start = 4.dp)
                 )
             }
         }
@@ -81,13 +85,13 @@ fun VideosScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(shorts, key = { it.uri }) { short ->
-                        Box(Modifier.width(108.dp).aspectRatio(9f / 16f)) {
+                        Box(Modifier.width(112.dp).aspectRatio(9f / 16f)) {
                             MediaThumb(
                                 uri = short.uri,
                                 seed = short.title,
                                 isVideo = true,
                                 modifier = Modifier.fillMaxSize(),
-                                corner = 16.dp,
+                                corner = 18.dp,
                                 sizePx = 480,
                                 badge = formatDuration(short.durationMs),
                                 onClick = {
@@ -108,16 +112,16 @@ fun VideosScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
             }
         }
 
-        // Videos list
+        // Videos: big thumbnail cards
         if (videos.isNotEmpty()) {
             item {
                 SectionHeader("Videos", videos.size, "Shuffle videos") {
-                    vm.play(scope = com.example.spool.domain.PlayScope.VIDEOS)
+                    vm.play(scope = PlayScope.VIDEOS)
                     focus.clearFocus()
                 }
             }
             items(videos, key = { it.uri }) { video ->
-                VideoRow(video, vm) {
+                VideoCard(video, current = playing.uri == video.uri, vm = vm) {
                     vm.play(startUri = video.uri)
                     focus.clearFocus()
                 }
@@ -128,7 +132,10 @@ fun VideosScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
 
 @Composable
 private fun SectionHeader(title: String, count: Int, action: String, onAction: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Text(title, style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.size(8.dp))
         Text(
@@ -146,42 +153,51 @@ private fun SectionHeader(title: String, count: Int, action: String, onAction: (
 }
 
 @Composable
-private fun VideoRow(video: MediaItemEntity, vm: MusicViewModel, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
+private fun VideoCard(
+    video: MediaItemEntity,
+    current: Boolean,
+    vm: MusicViewModel,
+    onClick: () -> Unit
+) {
+    Column(
+        Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface)
             .clickable(onClick = onClick)
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         MediaThumb(
             uri = video.uri,
             seed = video.title,
             isVideo = true,
-            modifier = Modifier.width(132.dp).aspectRatio(16f / 9f),
-            corner = 12.dp,
-            sizePx = 480,
+            modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+            corner = 0.dp,
+            sizePx = 640,
             badge = formatDuration(video.durationMs)
         )
-        Column(Modifier.weight(1f)) {
-            Text(
-                video.title,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (video.artist != MediaScanner.UNKNOWN_ARTIST) {
+        Row(
+            Modifier.padding(start = 14.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
                 Text(
-                    video.artist,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    video.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (current) Ember else Color.Unspecified,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
+                if (video.artist != MediaScanner.UNKNOWN_ARTIST) {
+                    Text(
+                        video.artist,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
+            ItemMenuButton(item = video, vm = vm)
         }
-        ItemMenuButton(item = video, vm = vm)
     }
 }

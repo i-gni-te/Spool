@@ -11,22 +11,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.example.spool.ui.theme.Butter
-import com.example.spool.ui.theme.Ember
 import com.example.spool.ui.theme.Ink
-import com.example.spool.ui.theme.Lavender
-
-private val coverColors = listOf(
-    Ember, Lavender, Butter,
-    Color(0xFF5CE1C8), Color(0xFFFF6FA8), Color(0xFF6FA8FF)
-)
+import com.example.spool.ui.theme.artistPalette
 
 /** Generated cover: the same seed (e.g. an artist) always gets the same gradient. */
 @Composable
@@ -36,15 +29,13 @@ fun Cover(
     isVideo: Boolean = false,
     corner: Dp = 14.dp
 ) {
-    val hash = seed.lowercase().hashCode()
-    val first = Math.floorMod(hash, coverColors.size)
-    val second = (first + 1 + Math.floorMod(hash / 6, coverColors.size - 1)) % coverColors.size
+    val (first, second) = remember(seed) { artistPalette(seed) }
     val initial = seed.trim().firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "♪"
 
     Box(
         modifier
             .clip(RoundedCornerShape(corner))
-            .background(Brush.linearGradient(listOf(coverColors[first], coverColors[second]))),
+            .background(Brush.linearGradient(listOf(first, second))),
         contentAlignment = Alignment.Center
     ) {
         Text(

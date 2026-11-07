@@ -24,7 +24,7 @@ object Prefs {
 
     fun loopMode(context: Context): LoopMode =
         runCatching { LoopMode.valueOf(prefs(context).getString(LOOP_MODE, null).orEmpty()) }
-            .getOrDefault(LoopMode.OFF)
+            .getOrDefault(LoopMode.ALL)
 
     fun setLoopMode(context: Context, mode: LoopMode) {
         prefs(context).edit().putString(LOOP_MODE, mode.name).apply()
