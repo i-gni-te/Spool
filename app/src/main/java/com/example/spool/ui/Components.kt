@@ -34,7 +34,6 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -54,6 +53,12 @@ import com.example.spool.ui.theme.Ink
 import com.example.spool.ui.theme.SpoolGradient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 
 /** In-memory thumbnail cache, plus a list of files known to have no thumbnail. */
 private object ThumbCache {
@@ -84,15 +89,19 @@ fun MediaThumb(
     contentScale: ContentScale = ContentScale.Crop
 ) {
     val context = LocalContext.current
-    val bitmap by produceState<Bitmap?>(ThumbCache.get(uri), uri) {
-        if (value == null && uri.isNotEmpty() && !ThumbCache.isMissing(uri)) {
+    val cacheKey = "$uri#$sizePx" // each size is cached separately
+
+    // remember(cacheKey) starts fresh whenever the song changes, so the old picture can't linger
+    var bitmap by remember(cacheKey) { mutableStateOf(ThumbCache.get(cacheKey)) }
+    LaunchedEffect(cacheKey) {
+        if (bitmap == null && uri.isNotEmpty() && !ThumbCache.isMissing(uri)) {
             val loaded = withContext(Dispatchers.IO) {
                 runCatching {
                     context.contentResolver.loadThumbnail(Uri.parse(uri), Size(sizePx, sizePx), null)
                 }.getOrNull()
             }
-            if (loaded != null) ThumbCache.put(uri, loaded) else ThumbCache.markMissing(uri)
-            value = loaded
+            if (loaded != null) ThumbCache.put(cacheKey, loaded) else ThumbCache.markMissing(uri)
+            bitmap = loaded
         }
     }
 
@@ -101,16 +110,22 @@ fun MediaThumb(
             .clip(RoundedCornerShape(corner))
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
     ) {
-        val bmp = bitmap
-        if (bmp != null) {
-            Image(
-                bitmap = bmp.asImageBitmap(),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = contentScale
-            )
-        } else {
-            Cover(seed = seed, modifier = Modifier.fillMaxSize(), isVideo = isVideo, corner = corner)
+        Crossfade(targetState = bitmap, animationSpec = tween(250), label = "thumb") { bmp ->
+            if (bmp != null) {
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = contentScale
+                )
+            } else {
+                Cover(
+                    seed = seed,
+                    modifier = Modifier.fillMaxSize(),
+                    isVideo = isVideo,
+                    corner = corner
+                )
+            }
         }
         if (badge != null) {
             Text(
