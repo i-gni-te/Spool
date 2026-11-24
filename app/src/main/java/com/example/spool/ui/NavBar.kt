@@ -1,8 +1,8 @@
 package com.example.spool.ui
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -15,9 +15,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.example.spool.ui.theme.Ember
 
 enum class Destination(val label: String, val icon: ImageVector) {
-    AUTO("Auto", Icons.Filled.AutoAwesome),
     SONGS("Songs", Icons.Filled.MusicNote),
-    VIDEOS("Videos", Icons.Filled.VideoLibrary)
+    VIDEOS("Videos", Icons.Filled.VideoLibrary),
+    SETTINGS("Settings", Icons.Filled.Settings)
 }
 
 @Composable

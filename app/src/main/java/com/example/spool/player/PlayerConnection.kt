@@ -12,6 +12,7 @@ import com.example.spool.domain.PlayScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.example.spool.domain.SongSort
 
 data class PlayerState(
     val title: String = "",
@@ -19,7 +20,9 @@ data class PlayerState(
     val uri: String = "",
     val isPlaying: Boolean = false,
     val hasVideo: Boolean = false,
-    val isShort: Boolean = false
+    val isShort: Boolean = false,
+    val videoWidth: Int = 0,
+    val videoHeight: Int = 0
 )
 
 class PlayerConnection(context: Context) {
@@ -58,10 +61,14 @@ class PlayerConnection(context: Context) {
             uri = c.currentMediaItem?.mediaId.orEmpty().removeSuffix("#next"),
             isPlaying = c.playWhenReady && c.playbackState != Player.STATE_ENDED,
             hasVideo = extras?.getBoolean(PlaybackService.KEY_IS_VIDEO, false) == true,
-            isShort = extras?.getBoolean(PlaybackService.KEY_IS_SHORT, false) == true
+            isShort = extras?.getBoolean(PlaybackService.KEY_IS_SHORT, false) == true,
+            videoWidth = c.videoSize.width,
+            videoHeight = c.videoSize.height
         )
     }
 
+    /** Callback: items queued (0 = none, -1 = not connected yet) and whether the first is a video. */
+    /** Callback: items queued (0 = none, -1 = not connected yet) and whether the first is a video. */
     /** Callback: items queued (0 = none, -1 = not connected yet) and whether the first is a video. */
     /** Callback: items queued (0 = none, -1 = not connected yet) and whether the first is a video. */
     fun playQuery(
@@ -69,6 +76,8 @@ class PlayerConnection(context: Context) {
         startUri: String?,
         scope: PlayScope,
         artistKey: String? = null,
+        sort: SongSort = SongSort.AZ,
+        folder: String? = null,
         onResult: (count: Int, startedVideo: Boolean) -> Unit
     ) {
         val c = controller
@@ -81,6 +90,8 @@ class PlayerConnection(context: Context) {
             if (startUri != null) putString(PlaybackService.KEY_START_URI, startUri)
             putString(PlaybackService.KEY_SCOPE, scope.name)
             if (artistKey != null) putString(PlaybackService.KEY_ARTIST, artistKey)
+            putString(PlaybackService.KEY_SORT, sort.name)
+            if (folder != null) putString(PlaybackService.KEY_FOLDER, folder)
         }
         val result = c.sendCustomCommand(
             SessionCommand(PlaybackService.ACTION_PLAY_QUERY, Bundle.EMPTY),
@@ -93,6 +104,10 @@ class PlayerConnection(context: Context) {
                 extras?.getBoolean(PlaybackService.KEY_STARTED_VIDEO, false) == true
             )
         }, mainExecutor)
+    }
+
+    fun play() {
+        controller?.play()
     }
 
     /** Plays a single item by itself (the shorts feed). */
@@ -114,6 +129,16 @@ class PlayerConnection(context: Context) {
         val args = Bundle().apply { putString(PlaybackService.KEY_START_URI, uri) }
         c.sendCustomCommand(
             SessionCommand(PlaybackService.ACTION_PLAY_QUEUE_ITEM, Bundle.EMPTY),
+            args
+        )
+    }
+
+    /** The user added a subtitle file for [videoUri]; the service attaches it. */
+    fun refreshSubtitle(videoUri: String) {
+        val c = controller ?: return
+        val args = Bundle().apply { putString(PlaybackService.KEY_START_URI, videoUri) }
+        c.sendCustomCommand(
+            SessionCommand(PlaybackService.ACTION_REFRESH_SUBTITLE, Bundle.EMPTY),
             args
         )
     }

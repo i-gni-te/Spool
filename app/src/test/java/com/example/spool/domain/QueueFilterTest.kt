@@ -39,4 +39,21 @@ class QueueFilterTest {
             assertTrue(plan.pool.none { it.kind == MediaClassifier.SHORT })
         }
     }
+    @Test
+    fun `movies and shows have their own scopes`() {
+        val movie = item("m", true, MediaClassifier.MOVIE)
+        val episode = item("e", true, MediaClassifier.SHOW)
+        val lib = listOf(song, video, short, movie, episode)
+        assertEquals(listOf(movie), QueueFilter.plan(lib, PlayScope.MOVIES).pool)
+        assertEquals(listOf(episode), QueueFilter.plan(lib, PlayScope.SHOWS).pool)
+        assertEquals(listOf(video, movie, episode), QueueFilter.plan(lib, PlayScope.ANY_VIDEO).pool)
+    }
+
+    @Test
+    fun `a tapped episode queues episodes only`() {
+        val episode = item("e", true, MediaClassifier.SHOW)
+        val movie = item("m", true, MediaClassifier.MOVIE)
+        val plan = QueueFilter.plan(listOf(song, video, movie, episode), PlayScope.AUTO, first = episode)
+        assertEquals(listOf(episode), plan.pool)
+    }
 }

@@ -28,20 +28,16 @@ class MediaScanner(private val context: Context) {
     }
 
     private fun query(collection: Uri, selection: String?, isVideo: Boolean): List<MediaItemEntity> {
-        val projection = buildList {
-            add(MediaStore.MediaColumns._ID)
-            add(MediaStore.MediaColumns.DISPLAY_NAME)
-            add(MediaStore.MediaColumns.TITLE)
-            add(MediaStore.MediaColumns.ARTIST)
-            add(MediaStore.MediaColumns.ALBUM)
-            add(MediaStore.MediaColumns.DURATION)
-            add(MediaStore.MediaColumns.RELATIVE_PATH)
-            if (isVideo) {
-                add(MediaStore.MediaColumns.WIDTH)
-                add(MediaStore.MediaColumns.HEIGHT)
-                add(MediaStore.MediaColumns.ORIENTATION)
-            }
-        }.toTypedArray()
+        val projection = arrayOf(
+            MediaStore.MediaColumns._ID,
+            MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.TITLE,
+            MediaStore.MediaColumns.ARTIST,
+            MediaStore.MediaColumns.ALBUM,
+            MediaStore.MediaColumns.DURATION,
+            MediaStore.MediaColumns.DATE_ADDED,
+            MediaStore.MediaColumns.RELATIVE_PATH
+        )
 
         val items = mutableListOf<MediaItemEntity>()
         context.contentResolver.query(collection, projection, selection, null, null)?.use { c ->
@@ -51,16 +47,15 @@ class MediaScanner(private val context: Context) {
             val artistCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.ARTIST)
             val albumCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.ALBUM)
             val durCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DURATION)
+            val addedCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
             val pathCol = c.getColumnIndexOrThrow(MediaStore.MediaColumns.RELATIVE_PATH)
-            val widthCol = if (isVideo) c.getColumnIndexOrThrow(MediaStore.MediaColumns.WIDTH) else -1
-            val heightCol = if (isVideo) c.getColumnIndexOrThrow(MediaStore.MediaColumns.HEIGHT) else -1
-            val rotCol = if (isVideo) c.getColumnIndexOrThrow(MediaStore.MediaColumns.ORIENTATION) else -1
 
             while (c.moveToNext()) {
                 val displayName = c.getString(nameCol) ?: ""
                 val durationMs = c.getLong(durCol)
+                val folder = c.getString(pathCol).orEmpty()
                 val kind = if (isVideo) {
-                    MediaClassifier.classifyVideo(displayName, durationMs)
+                    MediaClassifier.classifyVideo(displayName, durationMs, folder)
                 } else {
                     MediaClassifier.SONG
                 }
@@ -72,7 +67,9 @@ class MediaScanner(private val context: Context) {
                     rawAlbum = c.getString(albumCol),
                     durationMs = durationMs,
                     isVideo = isVideo,
-                    kind = kind
+                    kind = kind,
+                    addedAt = c.getLong(addedCol) * 1000L, // the phone stores seconds
+                    folder = folder
                 )
             }
         }
@@ -87,7 +84,9 @@ class MediaScanner(private val context: Context) {
         rawAlbum: String?,
         durationMs: Long,
         isVideo: Boolean,
-        kind: Int
+        kind: Int,
+        addedAt: Long,
+        folder: String
     ): MediaItemEntity {
         val tagArtist = rawArtist.cleanTag()
         val (nameArtist, nameTitle) = TextNormalizer.parseFileName(displayName)
@@ -106,7 +105,9 @@ class MediaScanner(private val context: Context) {
             durationMs = durationMs,
             isVideo = isVideo,
             searchKey = TextNormalizer.normalize(listOfNotNull(artist, title).joinToString(" ")),
-            kind = kind
+            kind = kind,
+            addedAt = addedAt,
+            folder = folder
         )
     }
 

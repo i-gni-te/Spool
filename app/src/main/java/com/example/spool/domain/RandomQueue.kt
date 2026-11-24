@@ -12,7 +12,8 @@ import kotlin.random.Random
 class RandomQueue(
     songs: List<MediaItemEntity>,
     private val random: Random = Random.Default,
-    shuffle: Boolean = true
+    shuffle: Boolean = true,
+    order: Comparator<MediaItemEntity> = MediaOrder.byName
 ) {
     /** What the queue screen shows. */
     data class Snapshot(
@@ -39,9 +40,8 @@ class RandomQueue(
 
     var shuffle: Boolean = shuffle
 
-    private val byName = MediaOrder.byName
     private val all = songs.distinctBy { it.uri }
-    private val ordered = all.sortedWith(byName)
+    private val ordered = all.sortedWith(order)
     private val orderPos: Map<String, Int> = ordered.mapIndexed { i, s -> s.uri to i }.toMap()
     private val unplayed = all.toMutableList()
     private val history = mutableListOf<MediaItemEntity>()
@@ -180,14 +180,15 @@ class RandomQueue(
         fun restore(
             state: State,
             songs: List<MediaItemEntity>,
-            random: Random = Random.Default
+            random: Random = Random.Default,
+            order: Comparator<MediaItemEntity> = MediaOrder.byName
         ): RandomQueue? {
             val byUri = songs.associateBy { it.uri }
             val pool = state.all.mapNotNull { byUri[it] }
             val currentUri = state.history.getOrNull(state.index) ?: return null
             if (pool.isEmpty() || byUri[currentUri] == null) return null
 
-            val queue = RandomQueue(pool, random, state.shuffle)
+            val queue = RandomQueue(pool, random, state.shuffle, order)
             queue.unplayed.clear()
             queue.unplayed.addAll(state.unplayed.mapNotNull { byUri[it] })
             queue.history.addAll(state.history.mapNotNull { byUri[it] })

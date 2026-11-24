@@ -59,6 +59,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.speech.RecognizerIntent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.Mic
 
 /** In-memory thumbnail cache, plus a list of files known to have no thumbnail. */
 private object ThumbCache {
@@ -151,6 +159,7 @@ fun SearchField(
     onGo: (() -> Unit)? = null
 ) {
     val focus = LocalFocusManager.current
+
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
@@ -164,6 +173,12 @@ fun SearchField(
                 IconButton(onClick = { onQueryChange("") }) {
                     Icon(Icons.Filled.Clear, contentDescription = "Clear")
                 }
+            } else {
+                // What you say is searched and played, like typing and pressing Enter
+                VoiceSearchButton(onHeard = { spoken ->
+                    onQueryChange(spoken)
+                    onGo?.invoke()
+                })
             }
         },
         keyboardOptions = KeyboardOptions(

@@ -19,7 +19,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
 private val SpoolColors = darkColorScheme(
     primary = Ember,
     onPrimary = Ink,
@@ -53,32 +55,37 @@ fun SpoolTheme(content: @Composable () -> Unit) {
     )
 }
 
-/** App backdrop: deep ink with two slow-drifting colour glows. */
+/** App backdrop: deep ink with two colour glows that drift slowly (or stay still). */
 @Composable
-fun Modifier.spoolBackground(): Modifier {
-    val drift by rememberInfiniteTransition(label = "glow").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            tween(12_000, easing = FastOutSlowInEasing),
-            RepeatMode.Reverse
-        ),
-        label = "drift"
-    )
+fun Modifier.spoolBackground(animate: Boolean = true): Modifier {
+    val drift: State<Float> = if (animate) {
+        rememberInfiniteTransition(label = "glow").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                tween(12_000, easing = FastOutSlowInEasing),
+                RepeatMode.Reverse
+            ),
+            label = "drift"
+        )
+    } else {
+        remember { mutableFloatStateOf(0.5f) }
+    }
     return this
         .background(Ink)
         .drawBehind {
+            val d = drift.value
             drawRect(
                 Brush.radialGradient(
                     listOf(Ember.copy(alpha = 0.20f), Color.Transparent),
-                    center = Offset(size.width * (0.55f + 0.4f * drift), 0f),
+                    center = Offset(size.width * (0.55f + 0.4f * d), 0f),
                     radius = size.width * 0.95f
                 )
             )
             drawRect(
                 Brush.radialGradient(
                     listOf(Lavender.copy(alpha = 0.15f), Color.Transparent),
-                    center = Offset(size.width * (0.40f - 0.3f * drift), size.height * 0.40f),
+                    center = Offset(size.width * (0.40f - 0.3f * d), size.height * 0.40f),
                     radius = size.width * 0.85f
                 )
             )

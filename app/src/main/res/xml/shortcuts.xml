@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="resume"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_play"
+        android:shortcutShortLabel="@string/shortcut_resume"
+        android:shortcutLongLabel="@string/shortcut_resume">
+        <intent
+            android:action="com.example.spool.action.RESUME"
+            android:targetPackage="com.example.spool"
+            android:targetClass="com.example.spool.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="shuffle_songs"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_shuffle"
+        android:shortcutShortLabel="@string/shortcut_shuffle_songs"
+        android:shortcutLongLabel="@string/shortcut_shuffle_songs">
+        <intent
+            android:action="com.example.spool.action.SHUFFLE_SONGS"
+            android:targetPackage="com.example.spool"
+            android:targetClass="com.example.spool.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="shuffle_videos"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_shuffle"
+        android:shortcutShortLabel="@string/shortcut_shuffle_videos"
+        android:shortcutLongLabel="@string/shortcut_shuffle_videos">
+        <intent
+            android:action="com.example.spool.action.SHUFFLE_VIDEOS"
+            android:targetPackage="com.example.spool"
+            android:targetClass="com.example.spool.MainActivity" />
+    </shortcut>
+</shortcuts>

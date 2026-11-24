@@ -4,8 +4,16 @@ import androidx.room.Dao
 import androidx.room.Query
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
+import androidx.room.Embedded
 
 data class ArtistCount(val name: String, val total: Int)
+
+/** A movie or episode that was left part-way, with how far you got. */
+data class ResumeVideo(
+    @Embedded val item: MediaItemEntity,
+    val positionMs: Long,
+    val watchDurationMs: Long
+)
 
 @Dao
 interface MediaDao {
@@ -76,4 +84,65 @@ interface MediaDao {
                 "ORDER BY s.plays DESC, s.lastPlayedAt DESC LIMIT :limit"
     )
     fun mostPlayed(limit: Int): Flow<List<PlayedTrack>>
+    @Upsert
+    suspend fun putWatchPosition(entry: WatchPosition)
+
+    @Query("DELETE FROM watch_positions WHERE uri = :uri")
+    suspend fun clearWatchPosition(uri: String)
+
+    @Query("SELECT * FROM watch_positions WHERE uri = :uri LIMIT 1")
+    suspend fun watchPosition(uri: String): WatchPosition?
+
+    @Query("SELECT * FROM play_stats")
+    fun allStats(): Flow<List<PlayStat>>
+
+    @Query("SELECT * FROM play_stats")
+    suspend fun allStatsOnce(): List<PlayStat>
+
+    @Query(
+        "SELECT m.*, w.positionMs AS positionMs, w.durationMs AS watchDurationMs " +
+                "FROM media_items m JOIN watch_positions w ON w.uri = m.uri " +
+                "WHERE m.kind IN (3, 4) AND w.positionMs > 5000 " +
+                "ORDER BY w.updatedAt DESC LIMIT :limit"
+    )
+    fun continueWatching(limit: Int): Flow<List<ResumeVideo>>
+    @Upsert
+    suspend fun putSubtitle(entry: SubtitleFile)
+
+    @Query("SELECT * FROM subtitle_files WHERE videoUri = :uri LIMIT 1")
+    suspend fun subtitleFor(uri: String): SubtitleFile?
+
+    @Query("SELECT * FROM subtitle_files")
+    suspend fun allSubtitles(): List<SubtitleFile>
+
+    @Query("SELECT uri FROM favorites")
+    fun favoriteUris(): Flow<List<String>>
+
+    @Query("SELECT uri FROM favorites")
+    suspend fun favoriteUrisOnce(): List<String>
+
+    @Upsert
+    suspend fun putFavorite(entry: Favorite)
+
+    @Query("DELETE FROM favorites WHERE uri = :uri")
+    suspend fun removeFavorite(uri: String)
+
+    @Query("DELETE FROM favorites WHERE uri IN (:uris)")
+    suspend fun deleteFavorites(uris: List<String>)
+
+    @Upsert
+    suspend fun putLyrics(entry: LyricsEntry)
+
+    @Query("SELECT * FROM lyrics WHERE uri = :uri LIMIT 1")
+    fun lyricsFlow(uri: String): Flow<LyricsEntry?>
+
+    @Query("DELETE FROM lyrics WHERE uri = :uri")
+    suspend fun deleteLyrics(uri: String)
+
+    @Query("SELECT uri FROM lyrics")
+    suspend fun lyricsUris(): List<String>
+
+    @Query("DELETE FROM lyrics WHERE uri IN (:uris)")
+    suspend fun deleteLyricsFor(uris: List<String>)
+
 }

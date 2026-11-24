@@ -38,6 +38,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.media3.session.DefaultMediaNotificationProvider
 import com.example.spool.R
+import com.example.spool.domain.SongSort
+import com.example.spool.domain.SeriesParser
+import android.net.Uri
+import com.example.spool.data.SubtitleFile
+import android.util.Log
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import com.example.spool.domain.FolderIndex
+import android.media.audiofx.BassBoost
+import android.media.audiofx.Equalizer
+import com.example.spool.data.EqSettings
 
 @OptIn(UnstableApi::class)
 class PlaybackService : MediaSessionService() {
@@ -46,8 +56,19 @@ class PlaybackService : MediaSessionService() {
     private lateinit var exoPlayer: ExoPlayer
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+    // Subtitle files the user picked, keyed by video
+    private val subtitleCache = HashMap<String, SubtitleFile>()
     private var queue: RandomQueue? = null
     private var consecutiveErrors = 0
+
+    // The equalizer and bass boost attached to the player's sound
+    private var equalizer: Equalizer? = null
+    private var bassBoost: BassBoost? = null
+
+    // A damaged spot in a file: how often we've retried and where it happened
+    private var errorUri: String? = null
+    private var errorRetries = 0
+    private var errorPosition = 0L
 
     /** True while the shorts feed drives playback: the current short simply loops. */
     private var feedMode = false
@@ -66,7 +87,8 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
 
-        exoPlayer = ExoPlayer.Builder(this)
+        val renderers = DefaultRenderersFactory(this).setEnableDecoderFallback(true)
+        exoPlayer = ExoPlayer.Builder(this, renderers)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -85,20 +107,24 @@ class PlaybackService : MediaSessionService() {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) consecutiveErrors = 0
             }
+            override fun onAudioSessionIdChanged(audioSessionId: Int) {
+                attachEffects(audioSessionId)
+            }
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 if (!playWhenReady) {
                     if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
+                        saveWatchPosition(finished = true)
                         onItemEnded()
                     } else {
                         savePosition() // paused: remember where
+                        saveWatchPosition()
                     }
                 }
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                // Skip unplayable files, but give up if several fail in a row
-                if (++consecutiveErrors < MAX_CONSECUTIVE_ERRORS) playNext()
+                handlePlaybackError(error)
             }
         })
 
@@ -115,6 +141,7 @@ class PlaybackService : MediaSessionService() {
         )
 
         // Bring back what was playing last time, paused
+        loadSubtitles()
         restoreLast()
         startBackgroundLoops()
     }
@@ -141,9 +168,13 @@ class PlaybackService : MediaSessionService() {
         }
         mediaSession = null
         super.onDestroy()
+        releaseEffects()
     }
 
     private fun startBackgroundLoops() {
+        // Equalizer settings and presets chosen on the equalizer screen
+        scope.launch { AudioFx.settings.collect { applyFx(it) } }
+        scope.launch { AudioFx.presetRequests.collect { applyPreset(it) } }
         // The mode button: switch the running queue between in-order and shuffle
         scope.launch {
             PlaybackSettings.loop.collect { mode ->
@@ -157,7 +188,10 @@ class PlaybackService : MediaSessionService() {
         scope.launch {
             while (true) {
                 delay(10_000)
-                if (exoPlayer.isPlaying) savePosition()
+                if (exoPlayer.isPlaying) {
+                    savePosition()
+                    saveWatchPosition()
+                }
             }
         }
 
@@ -181,6 +215,44 @@ class PlaybackService : MediaSessionService() {
                 fadeOutAndPause()
                 SleepTimer.clear()
             }
+        }
+    }
+
+    private fun toast(text: String) =
+        Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
+
+    /**
+     * A mid-file problem (a damaged spot) must not throw the whole movie away. Retry in place,
+     * then skip a little further ahead each time. Only give up and move on if the file won't
+     * start, or the same stretch keeps failing.
+     */
+    private fun handlePlaybackError(error: PlaybackException) {
+        val uri = exoPlayer.currentMediaItem?.mediaId?.removeSuffix("#next")
+        val position = exoPlayer.currentPosition
+        Log.e("Spool", "Playback error ${error.errorCodeName} at ${position}ms in $uri", error)
+
+        // A different file, or well past the last problem: start counting again
+        if (uri != errorUri || position > errorPosition + 60_000L) {
+            errorUri = uri
+            errorRetries = 0
+        }
+
+        if (uri != null && position > 3_000L && errorRetries < ERROR_JUMPS.size) {
+            val jump = ERROR_JUMPS[errorRetries]
+            errorRetries++
+            errorPosition = position
+            exoPlayer.seekTo(position + jump)
+            exoPlayer.prepare()
+            exoPlayer.play()
+            if (jump > 0) toast("Damaged part, skipped ahead ${jump / 1000}s")
+            return
+        }
+
+        // The file won't play at all, or kept failing at the same spot
+        val title = exoPlayer.mediaMetadata.title ?: "this file"
+        if (++consecutiveErrors < MAX_CONSECUTIVE_ERRORS) {
+            toast("Couldn't play \"$title\", skipping")
+            playNext()
         }
     }
 
@@ -275,6 +347,80 @@ class PlaybackService : MediaSessionService() {
         attachArtwork(item)
     }
 
+    private fun attachEffects(sessionId: Int) {
+        releaseEffects()
+        if (sessionId == C.AUDIO_SESSION_ID_UNSET) return
+        equalizer = runCatching { Equalizer(0, sessionId) }.getOrNull()
+        bassBoost = runCatching { BassBoost(0, sessionId) }.getOrNull()
+        AudioFx.unavailable.value = equalizer == null
+        publishFxInfo()
+        applyFx(AudioFx.settings.value)
+    }
+
+    private fun releaseEffects() {
+        runCatching { equalizer?.release() }
+        runCatching { bassBoost?.release() }
+        equalizer = null
+        bassBoost = null
+    }
+
+    /** Tells the equalizer screen how many bands this phone has, and their range and presets. */
+    private fun publishFxInfo() {
+        val eq = equalizer
+        if (eq == null) {
+            AudioFx.info.value = null
+            return
+        }
+        val bands = eq.numberOfBands.toInt()
+        val range = eq.bandLevelRange
+        AudioFx.info.value = EqInfo(
+            bandHz = List(bands) { eq.getCenterFreq(it.toShort()) / 1000 },
+            minLevel = range[0].toInt(),
+            maxLevel = range[1].toInt(),
+            presets = List(eq.numberOfPresets.toInt()) { eq.getPresetName(it.toShort()) },
+            bassSupported = bassBoost?.strengthSupported == true
+        )
+        // First run: start flat
+        val current = AudioFx.settings.value
+        if (current.bandLevels.size != bands) {
+            AudioFx.settings.value = current.copy(bandLevels = List(bands) { 0 })
+        }
+    }
+
+    private fun applyFx(s: EqSettings) {
+        runCatching {
+            equalizer?.let { eq ->
+                val info = AudioFx.info.value
+                if (info != null && s.bandLevels.size == info.bandHz.size) {
+                    s.bandLevels.forEachIndexed { i, level ->
+                        eq.setBandLevel(
+                            i.toShort(),
+                            level.coerceIn(info.minLevel, info.maxLevel).toShort()
+                        )
+                    }
+                }
+                eq.setEnabled(s.enabled)
+            }
+            bassBoost?.let { bb ->
+                if (bb.strengthSupported) bb.setStrength(s.bassStrength.coerceIn(0, 1000).toShort())
+                bb.setEnabled(s.enabled && s.bassStrength > 0)
+            }
+        }
+    }
+
+    /** A preset from the phone's own list: apply it, then show the band levels it chose. */
+    private fun applyPreset(index: Int) {
+        val eq = equalizer ?: return
+        runCatching {
+            eq.usePreset(index.toShort())
+            val info = AudioFx.info.value ?: return
+            val levels = List(info.bandHz.size) { eq.getBandLevel(it.toShort()).toInt() }
+            val updated = AudioFx.settings.value.copy(enabled = true, bandLevels = levels)
+            AudioFx.settings.value = updated
+            Prefs.saveEqSettings(this, updated)
+        }
+    }
+
     /** Loads cover art off the main thread, then adds it to the playing item for the notification. */
     private fun attachArtwork(item: MediaItemEntity) {
         scope.launch {
@@ -302,6 +448,39 @@ class PlaybackService : MediaSessionService() {
         exoPlayer.prepare()
         exoPlayer.play()
         publishQueue()
+        errorRetries = 0
+        errorUri = null
+        maybeResume(item)
+    }
+    /** Movies and episodes continue where you stopped. Music videos start from the beginning. */
+    private fun maybeResume(item: MediaItemEntity) {
+        if (!Prefs.settings(this).resumeWhereLeftOff) return
+        if (item.kind != MediaClassifier.MOVIE && item.kind != MediaClassifier.SHOW) return
+        scope.launch {
+            val saved = (application as MusicApp).repository.watchPosition(item.uri)
+                ?: return@launch
+            val unfinished = saved.durationMs <= 0 || saved.positionMs < saved.durationMs * 0.95
+            val stillThisItem = exoPlayer.currentMediaItem?.mediaId == item.uri
+            if (saved.positionMs > 5_000 && unfinished && stillThisItem &&
+                exoPlayer.currentPosition < 3_000
+            ) {
+                exoPlayer.seekTo(saved.positionMs)
+                Toast.makeText(
+                    this@PlaybackService,
+                    "Resumed at ${clock(saved.positionMs)}",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+
+    private fun clock(ms: Long): String {
+        val totalSeconds = ms / 1000
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+        return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds)
+        else "%d:%02d".format(minutes, seconds)
     }
 
     /** Tells the queue screen what changed and saves the queue for next time. */
@@ -320,6 +499,28 @@ class PlaybackService : MediaSessionService() {
         if (exoPlayer.mediaItemCount == 0) return
         Prefs.saveResume(this, uri, exoPlayer.currentPosition)
     }
+    /** Remembers how far into a movie or long video we are, so it can be resumed later. */
+    private fun saveWatchPosition(finished: Boolean = false) {
+        val item = exoPlayer.currentMediaItem ?: return
+        val extras = exoPlayer.mediaMetadata.extras
+        if (extras == null ||
+            !extras.getBoolean(KEY_IS_VIDEO, false) ||
+            extras.getBoolean(KEY_IS_SHORT, false)
+        ) return
+
+        val uri = item.mediaId.removeSuffix("#next")
+        val position = exoPlayer.currentPosition
+        val duration = exoPlayer.duration
+        scope.launch(Dispatchers.IO) {
+            val repo = (application as MusicApp).repository
+            when {
+                finished || (duration > 0 && position > duration * 0.95) ->
+                    repo.clearWatchPosition(uri)
+                position > 5_000 ->
+                    repo.saveWatchPosition(uri, position, duration.coerceAtLeast(0L))
+            }
+        }
+    }
 
     /** Loads the last queue and the song that was playing, paused at its last position. */
     private fun restoreLast() {
@@ -331,7 +532,11 @@ class PlaybackService : MediaSessionService() {
 
             val uris = (saved.all + saved.unplayed + saved.history + saved.upNext).distinct()
             val songs = (application as MusicApp).repository.byUris(uris)
-            val restored = RandomQueue.restore(saved, songs) ?: return@launch
+            val sort = Prefs.songSort(this@PlaybackService)
+            val stats = if (sort == SongSort.AZ) emptyMap()
+            else (application as MusicApp).repository.statsMap()
+            val restored = RandomQueue.restore(saved, songs, order = sort.comparator(stats))
+                ?: return@launch
             val current = restored.current ?: return@launch
             if (queue != null || exoPlayer.mediaItemCount > 0) return@launch
 
@@ -381,26 +586,56 @@ class PlaybackService : MediaSessionService() {
         query: String,
         startUri: String?,
         playScope: PlayScope,
-        artistKey: String?
+        artistKey: String?,
+        sort: SongSort = SongSort.AZ,
+        folder: String? = null
     ): StartResult {
         feedMode = false
         val repo = (application as MusicApp).repository
         var results = repo.searchOnce(query)
-        // Artist tiles play exactly that artist, not every title containing the name
+        // Artist filters play exactly that artist, not every title containing the name
         if (!artistKey.isNullOrEmpty()) {
             results = results.filter { artistKey in ArtistParser.keys(it.artist) }
         }
+        // Folder view: only that folder
+        if (!folder.isNullOrEmpty()) {
+            results = results.filter { FolderIndex.keyOf(it) == folder }
+        }
+        // Favorites view: only the hearted items
+        if (sort == SongSort.FAVORITES) {
+            val favorites = repo.favoriteUris()
+            results = results.filter { it.uri in favorites }
+        }
+
         val first = startUri?.let { uri -> results.firstOrNull { it.uri == uri } }
         val plan = QueueFilter.plan(results, playScope, first)
-        if (plan.pool.isEmpty()) return StartResult(0, false)
+        var pool = plan.pool
+        var order: Comparator<MediaItemEntity>? = null
 
-        val newQueue = RandomQueue(plan.pool, shuffle = wantsShuffle())
+        // An episode queues its whole show, in season and episode order
+        if (first != null && first.kind == MediaClassifier.SHOW) {
+            val key = SeriesParser.key(first)
+            pool = repo.searchOnce("").filter {
+                it.kind == MediaClassifier.SHOW && SeriesParser.key(it) == key
+            }
+            order = SeriesParser.orderFor(pool)
+        }
+        if (pool.isEmpty()) return StartResult(0, false)
+
+        // In-order play follows the order the user is looking at
+        val stats = if (sort == SongSort.AZ || sort == SongSort.FAVORITES) emptyMap()
+        else repo.statsMap()
+        val newQueue = RandomQueue(
+            pool,
+            shuffle = wantsShuffle(),
+            order = order ?: sort.comparator(stats)
+        )
         queue = newQueue
         consecutiveErrors = 0
         val anchor = plan.anchor
         val started = if (anchor != null) newQueue.startWith(anchor) else newQueue.next()
         if (started != null) play(started)
-        return StartResult(plan.pool.size, started?.isVideo == true)
+        return StartResult(pool.size, started?.isVideo == true)
     }
 
     /** Plays one item on its own (the shorts feed). It loops until the user swipes on. */
@@ -418,8 +653,8 @@ class PlaybackService : MediaSessionService() {
         play(item)
     }
 
-    private fun MediaItemEntity.toMediaItem(): MediaItem =
-        MediaItem.Builder()
+    private fun MediaItemEntity.toMediaItem(): MediaItem {
+        val builder = MediaItem.Builder()
             .setMediaId(uri)
             .setUri(uri)
             .setMediaMetadata(
@@ -435,7 +670,21 @@ class PlaybackService : MediaSessionService() {
                     )
                     .build()
             )
-            .build()
+
+        // A subtitle file the user picked for this video
+        subtitleCache[uri]?.takeIf { readable(it.subtitleUri) }?.let { sub ->
+            builder.setSubtitleConfigurations(
+                listOf(
+                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(sub.subtitleUri))
+                        .setMimeType(sub.mimeType)
+                        .setLabel(sub.label)
+                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                        .build()
+                )
+            )
+        }
+        return builder.build()
+    }
 
     private inner class SessionCallback : MediaSession.Callback {
 
@@ -449,6 +698,7 @@ class PlaybackService : MediaSessionService() {
                 .add(PLAY_ITEM_COMMAND)
                 .add(PLAY_QUEUE_ITEM_COMMAND)
                 .add(ENQUEUE_COMMAND)
+                .add(REFRESH_SUBTITLE_COMMAND)
                 .build()
             return MediaSession.ConnectionResult.accept(
                 sessionCommands,
@@ -471,7 +721,11 @@ class PlaybackService : MediaSessionService() {
                         playScope = runCatching {
                             PlayScope.valueOf(args.getString(KEY_SCOPE).orEmpty())
                         }.getOrDefault(PlayScope.AUTO),
-                        artistKey = args.getString(KEY_ARTIST)
+                        artistKey = args.getString(KEY_ARTIST),
+                        sort = runCatching {
+                            SongSort.valueOf(args.getString(KEY_SORT).orEmpty())
+                        }.getOrDefault(SongSort.AZ),
+                        folder = args.getString(KEY_FOLDER)
                     )
                     future.set(
                         SessionResult(
@@ -502,6 +756,11 @@ class PlaybackService : MediaSessionService() {
                     future.set(SessionResult(SessionResult.RESULT_SUCCESS))
                 }
 
+                ACTION_REFRESH_SUBTITLE -> scope.launch {
+                    refreshSubtitle(args.getString(KEY_START_URI).orEmpty())
+                    future.set(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+
                 else -> return super.onCustomCommand(session, controller, customCommand, args)
             }
             return future
@@ -514,20 +773,60 @@ class PlaybackService : MediaSessionService() {
         const val ACTION_PLAY_QUEUE_ITEM = "com.example.spool.PLAY_QUEUE_ITEM"
         const val ACTION_ENQUEUE = "com.example.spool.ENQUEUE"
         const val KEY_QUERY = "query"
+        const val KEY_FOLDER = "folder"
         const val KEY_START_URI = "start_uri"
         const val KEY_SCOPE = "scope"
         const val KEY_ARTIST = "artist_key"
         const val KEY_AT_FRONT = "at_front"
         const val KEY_COUNT = "count"
+        const val KEY_SORT = "sort"
         const val KEY_STARTED_VIDEO = "started_video"
         const val KEY_IS_VIDEO = "is_video"
         const val KEY_IS_SHORT = "is_short"
         private const val MAX_CONSECUTIVE_ERRORS = 5
         private const val FADE_MS = 10_000L
         private const val LISTEN_MS = 30_000L
+        // Where to restart after an error in the middle of a file: same spot, then further ahead
+        private val ERROR_JUMPS = longArrayOf(0L, 5_000L, 15_000L, 30_000L)
         private val PLAY_QUERY_COMMAND = SessionCommand(ACTION_PLAY_QUERY, Bundle.EMPTY)
         private val PLAY_ITEM_COMMAND = SessionCommand(ACTION_PLAY_ITEM, Bundle.EMPTY)
         private val PLAY_QUEUE_ITEM_COMMAND = SessionCommand(ACTION_PLAY_QUEUE_ITEM, Bundle.EMPTY)
         private val ENQUEUE_COMMAND = SessionCommand(ACTION_ENQUEUE, Bundle.EMPTY)
+
+        const val ACTION_REFRESH_SUBTITLE = "com.example.spool.REFRESH_SUBTITLE"
+        private val REFRESH_SUBTITLE_COMMAND = SessionCommand(ACTION_REFRESH_SUBTITLE, Bundle.EMPTY)
     }
+
+    private fun loadSubtitles() {
+        scope.launch {
+            (application as MusicApp).repository.allSubtitles()
+                .forEach { subtitleCache[it.videoUri] = it }
+        }
+    }
+
+    /** A subtitle was just added for [videoUri]: remember it, and apply it now if that video is playing. */
+    private suspend fun refreshSubtitle(videoUri: String) {
+        val saved = (application as MusicApp).repository.subtitleFor(videoUri) ?: return
+        subtitleCache[videoUri] = saved
+
+        val current = queue?.current ?: return
+        val playingUri = exoPlayer.currentMediaItem?.mediaId?.removeSuffix("#next")
+        if (current.uri != videoUri || playingUri != videoUri) return
+
+        // Reload this video at the same spot, now with the subtitle file attached
+        val wasPlaying = exoPlayer.playWhenReady
+        val position = exoPlayer.currentPosition
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .build()
+        load(current, position)
+        exoPlayer.playWhenReady = wasPlaying
+        exoPlayer.prepare()
+    }
+
+    /** A subtitle file that can no longer be opened (deleted, permission lost) must not stop playback. */
+    private fun readable(uriString: String): Boolean =
+        runCatching {
+            contentResolver.openInputStream(Uri.parse(uriString))?.use { true } ?: false
+        }.getOrDefault(false)
 }

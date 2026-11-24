@@ -13,5 +13,9 @@ data class MediaItemEntity(
     val durationMs: Long,
     val isVideo: Boolean,
     val searchKey: String,
-    val kind: Int = MediaClassifier.SONG
+    val kind: Int = MediaClassifier.SONG,
+    /** When the file arrived on the phone, in milliseconds. */
+    val addedAt: Long = 0L,
+    /** The folder the file sits in, e.g. "Movies/Action/". Used for movies and TV shows. */
+    val folder: String = ""
 )

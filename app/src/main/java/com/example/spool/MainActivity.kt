@@ -45,7 +45,6 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.Player
 import com.example.spool.ui.Destination
 import com.example.spool.ui.FileRequest
-import com.example.spool.ui.HomeScreen
 import com.example.spool.ui.ImmersiveMode
 import com.example.spool.ui.MiniPlayer
 import com.example.spool.ui.MusicViewModel
@@ -53,6 +52,7 @@ import com.example.spool.ui.NowPlayingScreen
 import com.example.spool.ui.OnboardingScreen
 import com.example.spool.ui.PermissionScreen
 import com.example.spool.ui.RenameRequest
+import com.example.spool.ui.ShortcutActions
 import com.example.spool.ui.ShortsFeedScreen
 import com.example.spool.ui.SongsScreen
 import com.example.spool.ui.SpoolNavBar
@@ -63,7 +63,10 @@ import com.example.spool.ui.findActivity
 import com.example.spool.ui.theme.SpoolTheme
 import com.example.spool.ui.theme.spoolBackground
 import kotlinx.coroutines.launch
-
+import android.app.PictureInPictureParams
+import android.util.Rational
+import com.example.spool.ui.CrashDialog
+import com.example.spool.ui.SettingsScreen
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MusicViewModel by viewModels()
@@ -115,9 +118,10 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
+            val settings by viewModel.settings.collectAsState()
             SpoolTheme {
                 Surface(
-                    modifier = Modifier.fillMaxSize().spoolBackground(),
+                    modifier = Modifier.fillMaxSize().spoolBackground(settings.animatedBackground),
                     color = ComposeColor.Transparent,
                     contentColor = MaterialTheme.colorScheme.onBackground
                 ) {
@@ -125,17 +129,36 @@ class MainActivity : ComponentActivity() {
                         vm = viewModel,
                         hasAccess = hasAccess,
                         onRequestAccess = ::requestAccess,
-                        onOpenSettings = ::openSettings
+                        onOpenSettings = ::openSettings,
+                        inPip = inPip,
+                        onArmPip = ::armPip,
+                        onEnterPip = ::enterPip,
                     )
                 }
             }
         }
+
+        if (savedInstanceState == null) handleShortcut(intent)
+    }
+
+    // A launcher shortcut tapped while Cue is already open
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleShortcut(intent)
     }
 
     // Also fires when returning from system settings, and rescans on every app open
     override fun onResume() {
         super.onResume()
         refreshAccess()
+    }
+
+    /** Long-press shortcuts: Resume, Shuffle songs, Shuffle videos. */
+    private fun handleShortcut(intent: Intent?) {
+        val action = intent?.action ?: return
+        if (action !in ShortcutActions.ALL) return
+        intent.action = null // so rotating or reopening doesn't run it again
+        if (checkAccess()) viewModel.runShortcut(action)
     }
 
     private fun handleFileRequest(request: FileRequest) {
@@ -176,12 +199,55 @@ class MainActivity : ComponentActivity() {
             )
         )
     }
+
+    // Picture-in-picture
+    private var inPip by mutableStateOf(false)
+    private var pipAspect = Rational(16, 9)
+
+    private fun pipParams(autoEnter: Boolean) = PictureInPictureParams.Builder()
+        .setAspectRatio(pipAspect)
+        .setAutoEnterEnabled(autoEnter) // pressing Home shrinks a playing video into a window
+        .build()
+
+    /** Called by the screen: ready the window while a video plays, and match its shape. */
+    private fun armPip(armed: Boolean, width: Int, height: Int) {
+        if (width > 0 && height > 0) {
+            val ratio = width.toFloat() / height
+            pipAspect = when {
+                ratio > 2.38f -> Rational(238, 100) // Android only accepts shapes within these limits
+                ratio < 0.42f -> Rational(42, 100)
+                else -> Rational(width, height)
+            }
+        }
+        setPictureInPictureParams(pipParams(armed))
+    }
+
+    private fun enterPip() {
+        enterPictureInPictureMode(pipParams(true))
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        inPip = isInPictureInPictureMode
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // The little window was closed with its X: stop the video
+        if (isInPictureInPictureMode) viewModel.pause()
+    }
 }
 
 @Composable
 fun SpoolRoot(
     vm: MusicViewModel,
     hasAccess: Boolean,
+    inPip: Boolean,
+    onArmPip: (Boolean, Int, Int) -> Unit,
+    onEnterPip: () -> Unit,
     onRequestAccess: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -201,24 +267,37 @@ fun SpoolRoot(
         return
     }
 
-    val queue by vm.queue.collectAsState()
-    val shortsFill by vm.shortsFill.collectAsState()
-    val sleep by vm.sleep.collectAsState()
-
+    val lyrics by vm.currentLyrics.collectAsState()
     val playerState by vm.playerState.collectAsState()
     val videoPlayer by vm.videoPlayer.collectAsState()
     val loop by vm.loop.collectAsState()
+    val queue by vm.queue.collectAsState()
+    val sleep by vm.sleep.collectAsState()
+    val shortsFill by vm.shortsFill.collectAsState()
+    val settings by vm.settings.collectAsState()
+    val crash by vm.crashReport.collectAsState()
     val feed by vm.feed.collectAsState()
     val feedStart by vm.feedStart.collectAsState()
+    val favorites by vm.favorites.collectAsState()
     val landscape =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val activity = LocalContext.current.findActivity()
+    val context = LocalContext.current
+    val activity = context.findActivity()
 
-    var destination by rememberSaveable { mutableStateOf(Destination.AUTO) }
+    var destination by rememberSaveable { mutableStateOf(Destination.SONGS) }
     var videoOpen by rememberSaveable { mutableStateOf(false) }
     var nowPlayingOpen by rememberSaveable { mutableStateOf(false) }
     var shortsOpen by rememberSaveable { mutableStateOf(false) }
     var zoom by remember { mutableStateOf(false) }
+    var videoLocked by rememberSaveable { mutableStateOf(false) }
+
+    // Cue crashed last time: offer to send the report
+    if (crash != null) {
+        CrashDialog(
+            onSend = { vm.sendCrashReport(context) },
+            onDismiss = vm::dismissCrashReport
+        )
+    }
 
     // A video the user just started opens the full-screen video player
     LaunchedEffect(Unit) { vm.openVideoEvents.collect { videoOpen = true } }
@@ -234,12 +313,34 @@ fun SpoolRoot(
         if (videoOpen && playerState.hasVideo && !playerState.isShort) videoPlayer else null
     val nowPlaying = nowPlayingOpen && !playerState.hasVideo && playerState.title.isNotBlank()
 
-    // Back minimizes: sound keeps going (the feed pauses), the mini-player appears
+    // Leaving a video pauses it (unless you chose to keep the audio going)
+    val closeVideo: () -> Unit = {
+        if (!settings.keepAudioOnExit) vm.pause()
+        videoOpen = false
+    }
+
+    // While a video plays, pressing Home shrinks it into a floating window
+    LaunchedEffect(
+        video != null,
+        playerState.isPlaying,
+        playerState.videoWidth,
+        playerState.videoHeight
+    ) {
+        onArmPip(
+            video != null && playerState.isPlaying,
+            playerState.videoWidth,
+            playerState.videoHeight
+        )
+    }
+
+    // Back minimizes: the feed pauses, a video follows your setting, a song keeps playing
     BackHandler(enabled = shortsOpen) {
         shortsOpen = false
         vm.pause()
     }
-    BackHandler(enabled = video != null) { videoOpen = false }
+    // Locked: Back does nothing until the controls are unlocked
+    BackHandler(enabled = video != null) { if (!videoLocked) closeVideo() }
+    LaunchedEffect(video != null) { if (video == null) videoLocked = false }
     BackHandler(enabled = nowPlaying) { nowPlayingOpen = false }
 
     // Landscape video hides the system bars
@@ -262,13 +363,13 @@ fun SpoolRoot(
 
     when {
         shortsOpen -> ShortsFeedScreen(
-            fill = shortsFill,
-            onToggleFill = vm::toggleShortsFill,
             feed = feed,
             startUri = feedStart,
             player = videoPlayer,
             state = playerState,
+            fill = shortsFill,
             vm = vm,
+            onToggleFill = vm::toggleShortsFill,
             onTogglePlay = vm::togglePlayPause,
             onPlayItem = vm::playShort,
             onClose = {
@@ -282,30 +383,43 @@ fun SpoolRoot(
             state = playerState,
             zoom = zoom,
             loop = loop,
+            locked = videoLocked,
+            pip = inPip,
+            skipSeconds = settings.skipSeconds,
+            doubleTapSkip = settings.doubleTapSkip,
+            onLockedChange = { videoLocked = it },
             onCycleLoop = vm::cycleLoop,
             onPrevious = vm::previous,
             onToggle = vm::togglePlayPause,
             onNext = vm::next,
             onToggleZoom = { zoom = !zoom },
             onToggleOrientation = toggleOrientation,
-            onClose = { videoOpen = false }
+            onEnterPip = onEnterPip,
+            onSubtitleFile = vm::addSubtitle,
+            onClose = closeVideo
         )
 
         nowPlaying -> NowPlayingScreen(
-            queue = queue,
-            onPlayQueueItem = vm::playQueueItem,
             player = videoPlayer,
             state = playerState,
             loop = loop,
+            queue = queue,
+            sleep = sleep,
             onCycleLoop = vm::cycleLoop,
             onPrevious = vm::previous,
             onToggle = vm::togglePlayPause,
             onNext = vm::next,
-            onClose = { nowPlayingOpen = false },
-            sleep = sleep,
+            onPlayQueueItem = vm::playQueueItem,
             onSleepMinutes = vm::setSleepMinutes,
             onSleepEndOfTrack = vm::setSleepEndOfTrack,
-            onSleepOff = vm::clearSleep
+            onSleepOff = vm::clearSleep,
+            lyrics = lyrics,
+            onAddLyricsFile = vm::addLyricsFile,
+            onSaveLyricsText = vm::saveLyricsText,
+            onRemoveLyrics = vm::removeLyrics,
+            favorite = playerState.uri in favorites,
+            onToggleFavorite = { vm.toggleFavorite(playerState.uri) },
+            onClose = { nowPlayingOpen = false }
         )
 
         else -> Scaffold(
@@ -331,13 +445,9 @@ fun SpoolRoot(
         ) { padding ->
             val content = Modifier.padding(padding)
             when (destination) {
-                Destination.AUTO -> HomeScreen(
-                    vm = vm,
-                    onSeeAllSongs = { destination = Destination.SONGS },
-                    modifier = content
-                )
                 Destination.SONGS -> SongsScreen(vm, content)
                 Destination.VIDEOS -> VideosScreen(vm, content)
+                Destination.SETTINGS -> SettingsScreen(vm, content)
             }
         }
     }

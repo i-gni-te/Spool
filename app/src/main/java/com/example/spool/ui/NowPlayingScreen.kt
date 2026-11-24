@@ -1,5 +1,8 @@
 package com.example.spool.ui
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -21,6 +24,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Pause
@@ -48,6 +53,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
+import com.example.spool.domain.LyricsDoc
 import com.example.spool.domain.RandomQueue
 import com.example.spool.player.LoopMode
 import com.example.spool.player.PlayerState
@@ -63,6 +69,12 @@ fun NowPlayingScreen(
     loop: LoopMode,
     queue: RandomQueue.Snapshot?,
     sleep: SleepState,
+    favorite: Boolean,
+    onToggleFavorite: () -> Unit,
+    lyrics: LyricsDoc?,
+    onAddLyricsFile: (Uri) -> Unit,
+    onSaveLyricsText: (String) -> Unit,
+    onRemoveLyrics: () -> Unit,
     onCycleLoop: () -> Unit,
     onPrevious: () -> Unit,
     onToggle: () -> Unit,
@@ -75,7 +87,15 @@ fun NowPlayingScreen(
 ) {
     var showQueue by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
+    var showLyrics by remember { mutableStateOf(false) }
+    var showPaste by remember { mutableStateOf(false) }
+    var showEq by remember { mutableStateOf(false) }
     val sleepLabel = rememberSleepLabel(sleep)
+
+    // The lyrics file picker. A lyrics file has no standard type, so any file can be chosen.
+    val lyricsPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { picked -> if (picked != null) onAddLyricsFile(picked) }
 
     // The artist's two colours. They glow through the screen and fade over when the song changes.
     val seed = state.artist.ifBlank { state.title }
@@ -122,6 +142,13 @@ fun NowPlayingScreen(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                IconButton(onClick = onToggleFavorite) {
+                    Icon(
+                        if (favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                        contentDescription = if (favorite) "Remove from favorites" else "Add to favorites",
+                        tint = if (favorite) Ember else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 IconButton(onClick = { showSleep = true }) {
                     Icon(
                         Icons.Filled.Bedtime,
@@ -131,27 +158,38 @@ fun NowPlayingScreen(
                 }
             }
 
-            // Cover art: the biggest square that fits, with a shadow in the artist's colour
+            // The cover (with a shadow in the artist's colour), or the lyrics
             Box(
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 16.dp),
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
-                MediaThumb(
-                    uri = state.uri,
-                    seed = seed,
-                    isVideo = false,
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .aspectRatio(1f, matchHeightConstraintsFirst = true)
-                        .shadow(
-                            elevation = 28.dp,
-                            shape = RoundedCornerShape(28.dp),
-                            ambientColor = colorA,
-                            spotColor = colorA
-                        ),
-                    corner = 28.dp,
-                    sizePx = 720
-                )
+                if (showLyrics) {
+                    LyricsPanel(
+                        doc = lyrics,
+                        player = player,
+                        onAddFile = { lyricsPicker.launch(arrayOf("*/*")) },
+                        onPaste = { showPaste = true },
+                        onRemove = onRemoveLyrics,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    MediaThumb(
+                        uri = state.uri,
+                        seed = seed,
+                        isVideo = false,
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .aspectRatio(1f, matchHeightConstraintsFirst = true)
+                            .shadow(
+                                elevation = 28.dp,
+                                shape = RoundedCornerShape(28.dp),
+                                ambientColor = colorA,
+                                spotColor = colorA
+                            ),
+                        corner = 28.dp,
+                        sizePx = 720
+                    )
+                }
             }
 
             Text(
@@ -168,6 +206,16 @@ fun NowPlayingScreen(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+
+            Row(
+                Modifier.padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Pill(if (showLyrics) "Cover" else "Lyrics", active = showLyrics) {
+                    showLyrics = !showLyrics
+                }
+                Pill("EQ", active = false) { showEq = true }
+            }
             if (sleepLabel != null) {
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -180,7 +228,7 @@ fun NowPlayingScreen(
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 )
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             if (player != null) {
                 SeekBar(player = player, onTouch = {}, modifier = Modifier.fillMaxWidth())
@@ -242,4 +290,28 @@ fun NowPlayingScreen(
             onDismiss = { showSleep = false }
         )
     }
+    if (showPaste) {
+        PasteLyricsDialog(
+            onSave = onSaveLyricsText,
+            onDismiss = { showPaste = false }
+        )
+    }
+    if (showEq) EqualizerSheet { showEq = false }
+}
+
+@Composable
+private fun Pill(text: String, active: Boolean, onClick: () -> Unit) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = if (active) Ember else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(
+                if (active) Ember.copy(alpha = 0.15f)
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    )
 }

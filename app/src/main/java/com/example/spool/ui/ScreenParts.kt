@@ -5,6 +5,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -12,11 +16,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
-/** Logo, screen title and a count, matching the Auto screen's header. */
+/** Logo, screen title, a count, and an optional "report a problem" button. */
 @Composable
-fun ScreenHeader(title: String, count: String, modifier: Modifier = Modifier) {
+fun ScreenHeader(
+    title: String,
+    count: String,
+    modifier: Modifier = Modifier,
+    onReport: (() -> Unit)? = null
+) {
     Row(
-        modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        modifier.fillMaxWidth().padding(start = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         LogoMark(markSize = 28.dp)
@@ -28,5 +37,14 @@ fun ScreenHeader(title: String, count: String, modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        if (onReport != null) {
+            IconButton(onClick = onReport) {
+                Icon(
+                    Icons.Filled.BugReport,
+                    contentDescription = "Report a problem",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }

@@ -5,7 +5,7 @@ import com.example.spool.data.MediaItemEntity
 import kotlin.random.Random
 
 /** What a queue is built from. */
-enum class PlayScope { AUTO, SONGS, VIDEOS, SHORTS }
+enum class PlayScope { AUTO, SONGS, VIDEOS, MOVIES, SHOWS, SHORTS, ANY_VIDEO }
 
 /** [anchor] is the item to start with, if one is already decided. */
 data class QueuePlan(val pool: List<MediaItemEntity>, val anchor: MediaItemEntity?)
@@ -14,13 +14,18 @@ object QueueFilter {
     private fun scopeOf(item: MediaItemEntity): PlayScope = when (item.kind) {
         MediaClassifier.SONG -> PlayScope.SONGS
         MediaClassifier.VIDEO -> PlayScope.VIDEOS
+        MediaClassifier.MOVIE -> PlayScope.MOVIES
+        MediaClassifier.SHOW -> PlayScope.SHOWS
         else -> PlayScope.SHORTS
     }
 
     private fun matches(item: MediaItemEntity, scope: PlayScope): Boolean = when (scope) {
         PlayScope.SONGS -> item.kind == MediaClassifier.SONG
         PlayScope.VIDEOS -> item.kind == MediaClassifier.VIDEO
+        PlayScope.MOVIES -> item.kind == MediaClassifier.MOVIE
+        PlayScope.SHOWS -> item.kind == MediaClassifier.SHOW
         PlayScope.SHORTS -> item.kind == MediaClassifier.SHORT
+        PlayScope.ANY_VIDEO -> item.isVideo && item.kind != MediaClassifier.SHORT
         PlayScope.AUTO -> item.kind != MediaClassifier.SHORT
     }
 

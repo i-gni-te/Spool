@@ -43,7 +43,10 @@ import com.example.spool.ui.theme.Ember
 import com.example.spool.ui.theme.Ink
 import com.example.spool.ui.theme.SpoolGradient
 import kotlinx.coroutines.launch
-
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.SmartDisplay
+import androidx.compose.material.icons.filled.Tv
 @Composable
 fun OnboardingScreen(
     hasAccess: Boolean,
@@ -84,14 +87,14 @@ fun OnboardingScreen(
             when (page) {
                 0 -> PageFrame(
                     title = "Just type what you want",
-                    body = "Type an artist or a song and press Enter. " +
+                    body = "Type or say an artist or a song and press Enter. " +
                             "Cue plays everything that matches, with no playlists to build."
                 ) { TypeIllustration() }
 
                 1 -> PageFrame(
-                    title = "Songs, videos and shorts, kept apart",
-                    body = "Songs and videos each get their own tab. " +
-                            "Short clips like TikToks live in a feed you swipe through."
+                    title = "Songs, movies, shows and shorts",
+                    body = "Music, movies and TV shows each get their own place, with episodes in order. " +
+                            "Short clips live in a feed you swipe through."
                 ) { KindsIllustration() }
 
                 else -> PageFrame(
@@ -176,22 +179,28 @@ private fun TypeIllustration() {
 
 @Composable
 private fun KindsIllustration() {
+    val kinds = listOf(
+        listOf(Icons.Filled.MusicNote to "Songs", Icons.Filled.Movie to "Movies"),
+        listOf(Icons.Filled.Tv to "TV shows", Icons.Filled.SmartDisplay to "Shorts")
+    )
     Column(
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Destination.entries.forEach { d ->
-                Row(
-                    Modifier
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(d.icon, contentDescription = null, modifier = Modifier.size(18.dp), tint = Ember)
-                    Text(d.label, style = MaterialTheme.typography.labelLarge)
+        kinds.forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                row.forEach { (icon, label) ->
+                    Row(
+                        Modifier
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = Ember)
+                        Text(label, style = MaterialTheme.typography.labelLarge)
+                    }
                 }
             }
         }
