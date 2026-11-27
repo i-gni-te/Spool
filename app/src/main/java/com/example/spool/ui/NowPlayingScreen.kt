@@ -61,6 +61,7 @@ import com.example.spool.player.SleepState
 import com.example.spool.ui.theme.Ember
 import com.example.spool.ui.theme.Ink
 import com.example.spool.ui.theme.artistPalette
+import com.example.spool.ui.theme.Palette
 
 @Composable
 fun NowPlayingScreen(
@@ -99,9 +100,14 @@ fun NowPlayingScreen(
 
     // The artist's two colours. They glow through the screen and fade over when the song changes.
     val seed = state.artist.ifBlank { state.title }
-    val (colorA, colorB) = remember(seed) { artistPalette(seed) }
-    val glowTop by animateColorAsState(colorA.copy(alpha = 0.40f), tween(800), label = "glowTop")
-    val glowBottom by animateColorAsState(colorB.copy(alpha = 0.26f), tween(800), label = "glowBottom")
+    val (colorA, colorB) = remember(seed, Palette.current) { artistPalette(seed) }
+    val glowStrength = if (Palette.current.isDark) 1f else 0.5f
+    val glowTop by animateColorAsState(
+        colorA.copy(alpha = 0.40f * glowStrength), tween(800), label = "glowTop"
+    )
+    val glowBottom by animateColorAsState(
+        colorB.copy(alpha = 0.26f * glowStrength), tween(800), label = "glowBottom"
+    )
     val playBrush = remember(colorA, colorB) { Brush.linearGradient(listOf(colorA, colorB)) }
 
     Box(
@@ -231,7 +237,12 @@ fun NowPlayingScreen(
             Spacer(Modifier.height(12.dp))
 
             if (player != null) {
-                SeekBar(player = player, onTouch = {}, modifier = Modifier.fillMaxWidth())
+                SeekBar(
+                    player = player,
+                    onTouch = {},
+                    modifier = Modifier.fillMaxWidth(),
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                )
             }
             Spacer(Modifier.height(8.dp))
 
@@ -267,7 +278,7 @@ fun NowPlayingScreen(
                     Icon(
                         Icons.Filled.Menu,
                         contentDescription = "Queue",
-                        tint = Color.White.copy(alpha = 0.6f)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

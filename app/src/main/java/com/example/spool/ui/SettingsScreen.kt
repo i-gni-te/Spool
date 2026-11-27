@@ -42,6 +42,7 @@ import com.example.spool.data.AppSettings
 import com.example.spool.data.Prefs
 import com.example.spool.ui.theme.Ember
 import com.example.spool.ui.theme.Ink
+import com.example.spool.data.ReportVia
 
 // Change this to your own repository's releases page if it differs
 private const val RELEASES_URL = "https://github.com/snakedok67-ux/Spool/releases"
@@ -56,7 +57,9 @@ private val LICENCES = listOf(
 )
 
 @Composable
-fun SettingsScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
+fun SettingsScreen(vm: MusicViewModel,
+                   modifier: Modifier = Modifier,
+                   onOpenDuplicates:()-> Unit = {}) {
     val context = LocalContext.current
     val settings by vm.settings.collectAsState()
     val shortsFill by vm.shortsFill.collectAsState()
@@ -90,6 +93,13 @@ fun SettingsScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
         }
         item {
             SwitchRow(
+                "Swipe for brightness and volume",
+                "In videos: swipe the left side for brightness, the right side for volume",
+                settings.swipeGestures
+            ) { v -> vm.updateSettings { it.copy(swipeGestures = v) } }
+        }
+        item {
+            SwitchRow(
                 "Keep audio playing when I leave a video",
                 "Off: leaving a video pauses it",
                 settings.keepAudioOnExit
@@ -101,6 +111,29 @@ fun SettingsScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
                 "Pick up where you stopped",
                 settings.resumeWhereLeftOff
             ) { v -> vm.updateSettings { it.copy(resumeWhereLeftOff = v) } }
+        }
+        item {
+            SwitchRow(
+                "Gapless playback",
+                "Songs flow into each other with no pause. Applies from the next song",
+                settings.gapless
+            ) { v -> vm.updateSettings { it.copy(gapless = v) } }
+        }
+        item {
+            ChoiceRow(
+                title = "Fade between songs",
+                options = AppSettings.FADE_CHOICES.map { it to if (it == 0) "Off" else "$it s" },
+                selected = settings.fadeSeconds
+            ) { v -> vm.updateSettings { it.copy(fadeSeconds = v) } }
+        }
+        item {
+            Text(
+                "Each song fades out at its end and the next one fades in. It isn't an overlap: " +
+                        "Android's player can only play one song at a time.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp)
+            )
         }
         item {
             SwitchRow(
@@ -149,14 +182,35 @@ fun SettingsScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
                 if (scanning) "Scanning…" else "Look for new or removed files"
             ) { if (!scanning) vm.rescan() }
         }
+        item {
+            ActionRow(
+                "Find duplicate files",
+                "Songs and videos stored more than once"
+            ) { onOpenDuplicates() }
+        }
 
         item { SectionTitle("Appearance") }
+        item {
+            ThemePicker(
+                style = settings.themeStyle,
+                mode = settings.themeMode,
+                onStyle = { v -> vm.updateSettings { it.copy(themeStyle = v) } },
+                onMode = { v -> vm.updateSettings { it.copy(themeMode = v) } }
+            )
+        }
         item {
             SwitchRow(
                 "Animated background",
                 "A slow drifting glow. Turn it off to save a little battery",
                 settings.animatedBackground
             ) { v -> vm.updateSettings { it.copy(animatedBackground = v) } }
+        }
+        item {
+            SwitchRow(
+                "Hide the mini-player while scrolling",
+                "It slides away as you scroll a list and returns when you scroll back",
+                settings.autoHideMini
+            ) { v -> vm.updateSettings { it.copy(autoHideMini = v) } }
         }
 
         item { SectionTitle("Help") }

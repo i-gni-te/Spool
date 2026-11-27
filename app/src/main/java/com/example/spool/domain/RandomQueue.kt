@@ -48,6 +48,9 @@ class RandomQueue(
     private val upNext = mutableListOf<MediaItemEntity>()
     private var index = -1
 
+    /** The random pick that [peekNext] announced. [next] keeps that promise while it is valid. */
+    private var peekedRandom: MediaItemEntity? = null
+
     val size: Int get() = all.size
     val current: MediaItemEntity? get() = history.getOrNull(index)
 
@@ -64,6 +67,21 @@ class RandomQueue(
         history.add(pick)
         index = history.lastIndex
         return pick
+    }
+
+    /**
+     * What [next] will play, without changing anything. Asking twice gives the same answer,
+     * and [next] then plays exactly that (unless the queue changed in between).
+     */
+    fun peekNext(): MediaItemEntity? {
+        if (index < history.lastIndex) return history[index + 1]
+        if (upNext.isNotEmpty()) return upNext.first()
+        if (all.isEmpty()) return null
+        if (!shuffle) return ordered[(positionInList() + 1) % ordered.size]
+
+        val cached = peekedRandom
+        if (cached != null && candidatePool().any { it.uri == cached.uri }) return cached
+        return chooseRandom().also { peekedRandom = it }
     }
 
     /** Previous song, or null if already at the first one. */
@@ -144,7 +162,7 @@ class RandomQueue(
 
     private fun pickFromPool(): MediaItemEntity? {
         if (all.isEmpty()) return null
-        return if (shuffle) pickRandom() else pickInOrder()
+        return if (shuffle) takeRandom() else pickInOrder()
     }
 
     private fun pickInOrder(): MediaItemEntity {
@@ -162,13 +180,23 @@ class RandomQueue(
         return -1
     }
 
-    private fun pickRandom(): MediaItemEntity {
-        if (unplayed.isEmpty()) unplayed.addAll(all) // new round
+    /** The songs a shuffle pick may come from: not yet played this round, and never a repeat. */
+    private fun candidatePool(): List<MediaItemEntity> {
+        val pool = if (unplayed.isEmpty()) all else unplayed // empty means a new round
         val last = history.lastOrNull()
-        val candidates =
-            if (unplayed.size > 1 && last != null) unplayed.filter { it.uri != last.uri }
-            else unplayed
-        val pick = candidates[random.nextInt(candidates.size)]
+        return if (pool.size > 1 && last != null) pool.filter { it.uri != last.uri } else pool
+    }
+
+    private fun chooseRandom(): MediaItemEntity {
+        val candidates = candidatePool()
+        return candidates[random.nextInt(candidates.size)]
+    }
+
+    private fun takeRandom(): MediaItemEntity {
+        val promised = peekedRandom?.takeIf { p -> candidatePool().any { it.uri == p.uri } }
+        val pick = promised ?: chooseRandom()
+        peekedRandom = null
+        if (unplayed.isEmpty()) unplayed.addAll(all) // new round
         unplayed.remove(pick)
         return pick
     }

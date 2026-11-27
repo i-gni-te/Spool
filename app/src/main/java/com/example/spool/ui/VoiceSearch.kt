@@ -199,7 +199,11 @@ private fun rememberVoiceRecognizer(onResult: (String) -> Unit): VoiceRecognizer
 
 /** The mic button for search fields: asks for the microphone once, then shows Cue's own listening sheet. */
 @Composable
-fun VoiceSearchButton(onHeard: (String) -> Unit) {
+fun VoiceSearchButton(
+    onHeard: (String) -> Unit,
+    onListenStart: () -> Unit = {},
+    onListenCancel: () -> Unit = {}
+) {
     val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
     var micMissing by remember { mutableStateOf(false) }
@@ -212,8 +216,10 @@ fun VoiceSearchButton(onHeard: (String) -> Unit) {
         if (granted) recognizer.start()
     }
 
-    fun begin() {
+    fun begin(fresh: Boolean = true) {
         open = true
+        // Pause the music so the microphone doesn't hear it. Only when the mic first opens.
+        if (fresh) onListenStart()
         val granted = ContextCompat.checkSelfPermission(
             context, Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
@@ -243,7 +249,7 @@ fun VoiceSearchButton(onHeard: (String) -> Unit) {
         VoiceSheet(
             state = state,
             micMissing = micMissing,
-            onRetry = { begin() },
+            onRetry = { begin(fresh = false) },
             onOpenSettings = {
                 context.startActivity(
                     Intent(
@@ -255,6 +261,8 @@ fun VoiceSearchButton(onHeard: (String) -> Unit) {
             onDismiss = {
                 recognizer.stop()
                 open = false
+                // Closed without a search: carry on with the music
+                onListenCancel()
             }
         )
     }

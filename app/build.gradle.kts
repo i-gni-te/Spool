@@ -54,6 +54,7 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.core.splashscreen)
+    implementation(libs.androidx.media3.transformer)
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

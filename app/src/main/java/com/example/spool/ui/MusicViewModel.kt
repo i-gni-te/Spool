@@ -63,6 +63,13 @@ import com.example.spool.domain.LyricsDoc
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
+import com.example.spool.data.DuplicateFinder
+import com.example.spool.domain.DuplicateGroup
+import com.example.spool.data.RenameResult
+import com.example.spool.data.TextNormalizer
+import com.example.spool.data.MiniItem
+import com.example.spool.data.AudioConverter
+import com.example.spool.data.ConversionResult
 
 /** A file change that needs the user's permission, shown by the system as a dialog. */
 sealed interface FileRequest {
@@ -71,7 +78,24 @@ sealed interface FileRequest {
 
 data class TrashRequest(override val item: MediaItemEntity) : FileRequest
 data class RenameRequest(override val item: MediaItemEntity, val newBaseName: String) : FileRequest
+/** Several files moved to the trash with one system prompt (the duplicate cleaner). */
+data class TrashManyRequest(val items: List<MediaItemEntity>) : FileRequest {
+    override val item: MediaItemEntity get() = items.first()
+}
 
+sealed interface DuplicateState {
+    data object Idle : DuplicateState
+    data class Scanning(val done: Int, val total: Int) : DuplicateState
+    data class Done(val groups: List<DuplicateGroup>) : DuplicateState
+}
+
+sealed interface ConversionState {
+    data object Idle : ConversionState
+    data class Confirm(val item: MediaItemEntity) : ConversionState
+    data class Running(val item: MediaItemEntity, val progress: Float) : ConversionState
+    data class Done(val fileName: String) : ConversionState
+    data class Failed(val reason: String) : ConversionState
+}
 private const val DAY_MS = 24L * 60 * 60 * 1000
 private const val MAX_LYRICS_BYTES = 500_000
 
@@ -103,6 +127,46 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     private val _songSort = MutableStateFlow(Prefs.songSort(app))
     val songSort: StateFlow<SongSort> = _songSort.asStateFlow()
 
+    // ----- Video to audio -----
+
+    private val _conversion = MutableStateFlow<ConversionState>(ConversionState.Idle)
+    val conversion: StateFlow<ConversionState> = _conversion.asStateFlow()
+    private var conversionJob: Job? = null
+
+    /** From the ⋮ menu: ask before converting. */
+    fun askConvert(item: MediaItemEntity) {
+        if (_conversion.value !is ConversionState.Running) {
+            _conversion.value = ConversionState.Confirm(item)
+        }
+    }
+
+    fun startConversion() {
+        val item = (_conversion.value as? ConversionState.Confirm)?.item ?: return
+        _conversion.value = ConversionState.Running(item, 0f)
+        conversionJob = viewModelScope.launch {
+            val result = AudioConverter(appContext).convert(item) { progress ->
+                if (_conversion.value is ConversionState.Running) {
+                    _conversion.value = ConversionState.Running(item, progress.coerceIn(0f, 1f))
+                }
+            }
+            when (result) {
+                is ConversionResult.Done -> {
+                    _conversion.value = ConversionState.Done(result.fileName)
+                    rescan() // the new song shows up under New
+                }
+                is ConversionResult.Failed -> _conversion.value = ConversionState.Failed(result.reason)
+            }
+        }
+    }
+
+    fun cancelConversion() {
+        conversionJob?.cancel()
+        _conversion.value = ConversionState.Idle
+    }
+
+    fun dismissConversion() {
+        _conversion.value = ConversionState.Idle
+    }
     /** The uris the user has marked with a heart. */
     val favorites: StateFlow<Set<String>> = repo.favorites
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
@@ -171,6 +235,68 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         Prefs.saveSettings(appContext, updated)
     }
 
+    // ----- Duplicate finder -----
+
+    private val _duplicates = MutableStateFlow<DuplicateState>(DuplicateState.Idle)
+    val duplicates: StateFlow<DuplicateState> = _duplicates.asStateFlow()
+    private var duplicateJob: Job? = null
+
+    fun scanDuplicates() {
+        duplicateJob?.cancel()
+        duplicateJob = viewModelScope.launch {
+            _duplicates.value = DuplicateState.Scanning(0, 0)
+            try {
+                val everything = repo.searchOnce("")
+                val groups = DuplicateFinder(appContext).find(everything) { done, total ->
+                    _duplicates.value = DuplicateState.Scanning(done, total)
+                }
+                _duplicates.value = DuplicateState.Done(groups)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.e("Spool", "Duplicate scan failed", e)
+                _duplicates.value = DuplicateState.Done(emptyList())
+            }
+        }
+    }
+
+    fun resetDuplicates() {
+        duplicateJob?.cancel()
+        _duplicates.value = DuplicateState.Idle
+    }
+
+    fun trashDuplicates(items: List<MediaItemEntity>) {
+        if (items.isNotEmpty()) _fileRequests.tryEmit(TrashManyRequest(items))
+    }
+    /** The mini-player was used on a page whose last item isn't what's loaded: start that item. */
+    fun startMini(item: MiniItem) {
+        if (item.isShort) {
+            openShortsFeed(item.uri)
+            return
+        }
+        if (PlaybackSettings.loop.value == LoopMode.SHUFFLE) setMode(LoopMode.ALL)
+        // An empty search, so the item is found whatever is typed in the search box
+        player.playQuery("", item.uri, PlayScope.AUTO) { count, startedVideo ->
+            _message.value = if (count == 0) "Nothing to play here" else null
+            if (count > 0 && startedVideo) _openVideo.tryEmit(Unit)
+        }
+    }
+
+// ----- Voice search -----
+
+    private var voiceResume = false
+
+    /** The mic opened: pause the music so it doesn't drown out (or get heard by) the microphone. */
+    fun pauseForVoice() {
+        voiceResume = playerState.value.isPlaying
+        if (voiceResume) player.pause()
+    }
+
+    /** The mic closed without a search: carry on with the music if it was playing. */
+    fun cancelVoice() {
+        if (voiceResume) player.play()
+        voiceResume = false
+    }
+
     private fun fresh(
         list: List<MediaItemEntity>,
         st: Map<String, PlayStat>,
@@ -230,6 +356,33 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     val fileRequests: SharedFlow<FileRequest> = _fileRequests.asSharedFlow()
 
     val playerState: StateFlow<PlayerState> = player.state
+
+    // ----- What the mini-player shows on each page -----
+
+    private val _lastSong = MutableStateFlow(Prefs.lastItem(app, video = false))
+    val lastSong: StateFlow<MiniItem?> = _lastSong.asStateFlow()
+
+    private val _lastVideo = MutableStateFlow(Prefs.lastItem(app, video = true))
+    val lastVideo: StateFlow<MiniItem?> = _lastVideo.asStateFlow()
+
+    init {
+        // Remember the last song and the last video separately
+        viewModelScope.launch {
+            player.state.collect { s ->
+                if (s.title.isBlank() || s.uri.isEmpty()) return@collect
+                val item = MiniItem(s.uri, s.title, s.artist, s.isShort)
+                if (s.hasVideo) {
+                    if (_lastVideo.value != item) {
+                        _lastVideo.value = item
+                        Prefs.saveLastItem(appContext, true, item)
+                    }
+                } else if (_lastSong.value != item) {
+                    _lastSong.value = item
+                    Prefs.saveLastItem(appContext, false, item)
+                }
+            }
+        }
+    }
     val videoPlayer: StateFlow<Player?> = player.player
     val loop: StateFlow<LoopMode> = PlaybackSettings.loop.asStateFlow()
     val queue: StateFlow<RandomQueue.Snapshot?> = QueueInfo.snapshot.asStateFlow()
@@ -430,10 +583,44 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
                     if (now.uri == request.item.uri && !now.isShort) player.next()
                 }
 
+                is TrashManyRequest -> {
+                    val gone = request.items.map { it.uri }.toSet()
+                    gone.forEach { repo.remove(it) }
+                    _feed.value = _feed.value.filter { it.uri !in gone }
+                    val now = playerState.value
+                    if (now.uri in gone && !now.isShort) player.next()
+
+                    // Take the deleted copies out of the duplicate list
+                    val current = _duplicates.value
+                    if (current is DuplicateState.Done) {
+                        _duplicates.value = DuplicateState.Done(
+                            current.groups
+                                .map { g -> g.copy(copies = g.copies.filter { it.uri !in gone }) }
+                                .filter { it.copies.size >= 2 }
+                        )
+                    }
+                }
+
                 is RenameRequest -> {
-                    val ok = musicApp.fileEditor.rename(request.item.uri, request.newBaseName)
-                    _message.value = if (ok) null else "Couldn't rename that file"
-                    rescan()
+                    when (val result = musicApp.fileEditor.rename(request.item.uri, request.newBaseName)) {
+                        is RenameResult.Success -> {
+                            // "Artist - Title.mp3" gives both parts, anything else gives a title
+                            val (artist, title) = TextNormalizer.parseFileName(result.fileName)
+                            repo.applyRename(request.item.uri, title, artist)
+                            Toast.makeText(
+                                appContext,
+                                "Renamed to ${result.fileName}",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            rescan()
+                        }
+
+                        is RenameResult.Failure -> Toast.makeText(
+                            appContext,
+                            "Couldn't rename: ${result.reason}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
                 }
             }
         }

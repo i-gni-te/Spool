@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -31,9 +32,14 @@ import com.example.spool.player.PlayerState
 import com.example.spool.ui.theme.Ink
 import com.example.spool.ui.theme.SpoolGradient
 
+/**
+ * The floating mini-player. [navEnabled] is false when it shows the last item of a page that
+ * isn't what's loaded right now: Previous and Next have nothing to act on until it starts.
+ */
 @Composable
 fun MiniPlayer(
     state: PlayerState,
+    navEnabled: Boolean = true,
     onPrevious: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
@@ -84,7 +90,11 @@ fun MiniPlayer(
                     )
                 }
             }
-            IconButton(onClick = onPrevious) {
+            IconButton(
+                onClick = onPrevious,
+                enabled = navEnabled,
+                modifier = Modifier.alpha(if (navEnabled) 1f else 0.35f)
+            ) {
                 Icon(Icons.Filled.SkipPrevious, contentDescription = "Previous")
             }
             Box(
@@ -101,7 +111,11 @@ fun MiniPlayer(
                     tint = Ink
                 )
             }
-            IconButton(onClick = onNext) {
+            IconButton(
+                onClick = onNext,
+                enabled = navEnabled,
+                modifier = Modifier.alpha(if (navEnabled) 1f else 0.35f)
+            ) {
                 Icon(Icons.Filled.SkipNext, contentDescription = "Next")
             }
         }

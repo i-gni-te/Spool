@@ -156,7 +156,9 @@ fun SearchField(
     onQueryChange: (String) -> Unit,
     placeholder: String,
     modifier: Modifier = Modifier,
-    onGo: (() -> Unit)? = null
+    onGo: (() -> Unit)? = null,
+    onVoiceStart: () -> Unit = {},
+    onVoiceCancel: () -> Unit = {}
 ) {
     val focus = LocalFocusManager.current
 
@@ -175,10 +177,14 @@ fun SearchField(
                 }
             } else {
                 // What you say is searched and played, like typing and pressing Enter
-                VoiceSearchButton(onHeard = { spoken ->
-                    onQueryChange(spoken)
-                    onGo?.invoke()
-                })
+                VoiceSearchButton(
+                    onHeard = { spoken ->
+                        onQueryChange(spoken)
+                        onGo?.invoke()
+                    },
+                    onListenStart = onVoiceStart,
+                    onListenCancel = onVoiceCancel
+                )
             }
         },
         keyboardOptions = KeyboardOptions(
@@ -234,7 +240,7 @@ fun LoopButton(
     mode: LoopMode,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    idleTint: Color = Color.White.copy(alpha = 0.6f)
+    idleTint: Color = MaterialTheme.colorScheme.onSurfaceVariant
 ) {
     IconButton(onClick = onClick, modifier = modifier) {
         Icon(

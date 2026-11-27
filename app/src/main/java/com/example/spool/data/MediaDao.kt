@@ -145,4 +145,16 @@ interface MediaDao {
     @Query("DELETE FROM lyrics WHERE uri IN (:uris)")
     suspend fun deleteLyricsFor(uris: List<String>)
 
+    @Upsert
+    suspend fun putNameOverride(entry: NameOverride)
+
+    @Query("SELECT * FROM name_overrides")
+    suspend fun allNameOverrides(): List<NameOverride>
+
+    @Query("DELETE FROM name_overrides WHERE uri = :uri")
+    suspend fun removeNameOverride(uri: String)
+
+    @Query("DELETE FROM name_overrides WHERE uri IN (:uris)")
+    suspend fun deleteNameOverrides(uris: List<String>)
+
 }

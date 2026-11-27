@@ -67,6 +67,22 @@ import android.app.PictureInPictureParams
 import android.util.Rational
 import com.example.spool.ui.CrashDialog
 import com.example.spool.ui.SettingsScreen
+import com.example.spool.ui.DuplicatesScreen
+import com.example.spool.ui.TrashManyRequest
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import com.example.spool.data.MiniItem
+import com.example.spool.player.PlayerState
+import com.example.spool.ui.SystemBarIcons
+import com.example.spool.ui.theme.Palette
+import com.example.spool.ui.ConversionDialog
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MusicViewModel by viewModels()
@@ -119,7 +135,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val settings by viewModel.settings.collectAsState()
-            SpoolTheme {
+            SpoolTheme(style = settings.themeStyle, mode = settings.themeMode) {
                 Surface(
                     modifier = Modifier.fillMaxSize().spoolBackground(settings.animatedBackground),
                     color = ComposeColor.Transparent,
@@ -162,11 +178,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleFileRequest(request: FileRequest) {
-        val uri = Uri.parse(request.item.uri)
         val pendingIntent = when (request) {
             // Moves the file to the trash, where it stays recoverable for about 30 days
-            is TrashRequest -> MediaStore.createTrashRequest(contentResolver, listOf(uri), true)
-            is RenameRequest -> MediaStore.createWriteRequest(contentResolver, listOf(uri))
+            is TrashRequest ->
+                MediaStore.createTrashRequest(contentResolver, listOf(Uri.parse(request.item.uri)), true)
+            is TrashManyRequest ->
+                MediaStore.createTrashRequest(
+                    contentResolver,
+                    request.items.map { Uri.parse(it.uri) },
+                    true
+                )
+            is RenameRequest ->
+                MediaStore.createWriteRequest(contentResolver, listOf(Uri.parse(request.item.uri)))
         }
         pendingFileRequest = request
         fileRequestLauncher.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
@@ -251,8 +274,10 @@ fun SpoolRoot(
     onRequestAccess: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
+
     val onboardingDone by vm.onboardingDone.collectAsState()
     if (!onboardingDone) {
+        SystemBarIcons(lightBackground = !Palette.current.isDark)
         OnboardingScreen(
             hasAccess = hasAccess,
             onAllow = onRequestAccess,
@@ -263,6 +288,7 @@ fun SpoolRoot(
     }
     // Access taken away later (in system settings): ask again
     if (!hasAccess) {
+        SystemBarIcons(lightBackground = !Palette.current.isDark)
         PermissionScreen(onAllow = onRequestAccess, onOpenSettings = onOpenSettings)
         return
     }
@@ -279,16 +305,21 @@ fun SpoolRoot(
     val feed by vm.feed.collectAsState()
     val feedStart by vm.feedStart.collectAsState()
     val favorites by vm.favorites.collectAsState()
+    val lastSong by vm.lastSong.collectAsState()
+    val lastVideo by vm.lastVideo.collectAsState()
+    val conversion by vm.conversion.collectAsState()
     val landscape =
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val context = LocalContext.current
     val activity = context.findActivity()
 
     var destination by rememberSaveable { mutableStateOf(Destination.SONGS) }
+    var miniVisible by remember { mutableStateOf(true) }
     var videoOpen by rememberSaveable { mutableStateOf(false) }
     var nowPlayingOpen by rememberSaveable { mutableStateOf(false) }
     var shortsOpen by rememberSaveable { mutableStateOf(false) }
     var zoom by remember { mutableStateOf(false) }
+    var duplicatesOpen by rememberSaveable { mutableStateOf(false) }
     var videoLocked by rememberSaveable { mutableStateOf(false) }
 
     // Cue crashed last time: offer to send the report
@@ -298,6 +329,21 @@ fun SpoolRoot(
             onDismiss = vm::dismissCrashReport
         )
     }
+    // Video to audio: the confirmation, the progress, and the result
+    ConversionDialog(
+        state = conversion,
+        onConvert = vm::startConversion,
+        onCancel = vm::cancelConversion,
+        onDismiss = vm::dismissConversion,
+        onShowSongs = {
+            vm.dismissConversion()
+            if (shortsOpen || videoOpen) vm.pause()
+            shortsOpen = false
+            videoOpen = false
+            nowPlayingOpen = false
+            destination = Destination.SONGS
+        }
+    )
 
     // A video the user just started opens the full-screen video player
     LaunchedEffect(Unit) { vm.openVideoEvents.collect { videoOpen = true } }
@@ -312,6 +358,11 @@ fun SpoolRoot(
     val video: Player? =
         if (videoOpen && playerState.hasVideo && !playerState.isShort) videoPlayer else null
     val nowPlaying = nowPlayingOpen && !playerState.hasVideo && playerState.title.isNotBlank()
+
+    // Dark icons on light themes, but light icons while a video or the shorts feed is on black
+    SystemBarIcons(
+        lightBackground = !Palette.current.isDark && !shortsOpen && video == null
+    )
 
     // Leaving a video pauses it (unless you chose to keep the audio going)
     val closeVideo: () -> Unit = {
@@ -361,6 +412,46 @@ fun SpoolRoot(
             else ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
     }
 
+    // The mini-player follows the page: Songs shows the last song, Videos the last video
+    val onVideosPage = destination == Destination.VIDEOS
+    val showsCurrent = playerState.title.isNotBlank() &&
+            (destination == Destination.SETTINGS || playerState.hasVideo == onVideosPage)
+    val miniItem: MiniItem? = if (showsCurrent) {
+        MiniItem(playerState.uri, playerState.title, playerState.artist, playerState.isShort)
+    } else {
+        if (onVideosPage) lastVideo else lastSong
+    }
+    val miniState: PlayerState? = if (showsCurrent) {
+        playerState
+    } else {
+        miniItem?.let {
+            PlayerState(
+                title = it.title,
+                artist = it.artist,
+                uri = it.uri,
+                isPlaying = false,
+                hasVideo = onVideosPage,
+                isShort = it.isShort
+            )
+        }
+    }
+
+// Scrolling a list hides the mini-player, and scrolling back shows it again
+    val autoHide = settings.autoHideMini
+    val scrollConnection = remember(autoHide) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (autoHide) {
+                    if (available.y < -4f) miniVisible = false
+                    else if (available.y > 4f) miniVisible = true
+                }
+                return Offset.Zero
+            }
+        }
+    }
+// A new song, or a different page, brings it back
+    LaunchedEffect(playerState.uri, destination) { miniVisible = true }
+
     when {
         shortsOpen -> ShortsFeedScreen(
             feed = feed,
@@ -396,6 +487,7 @@ fun SpoolRoot(
             onToggleOrientation = toggleOrientation,
             onEnterPip = onEnterPip,
             onSubtitleFile = vm::addSubtitle,
+            swipeGestures = settings.swipeGestures,
             onClose = closeVideo
         )
 
@@ -426,29 +518,50 @@ fun SpoolRoot(
             containerColor = ComposeColor.Transparent,
             bottomBar = {
                 Column {
-                    MiniPlayer(
-                        state = playerState,
-                        onPrevious = vm::previous,
-                        onToggle = vm::togglePlayPause,
-                        onNext = vm::next,
-                        onOpen = {
-                            when {
-                                playerState.isShort -> vm.reopenShortsFeed()
-                                playerState.hasVideo -> videoOpen = true
-                                else -> nowPlayingOpen = true
-                            }
+                    AnimatedVisibility(
+                        visible = miniState != null && (miniVisible || !autoHide),
+                        enter = slideInVertically { it } + fadeIn(),
+                        exit = slideOutVertically { it } + fadeOut()
+                    ) {
+                        if (miniState != null) {
+                            MiniPlayer(
+                                state = miniState,
+                                navEnabled = showsCurrent,
+                                onPrevious = vm::previous,
+                                onToggle = {
+                                    if (showsCurrent) vm.togglePlayPause()
+                                    else miniItem?.let { vm.startMini(it) }
+                                },
+                                onNext = vm::next,
+                                onOpen = {
+                                    when {
+                                        // The page's last item isn't loaded: start it
+                                        !showsCurrent -> {
+                                            miniItem?.let { vm.startMini(it) }
+                                            if (!onVideosPage) nowPlayingOpen = true
+                                        }
+                                        playerState.isShort -> vm.reopenShortsFeed()
+                                        playerState.hasVideo -> videoOpen = true
+                                        else -> nowPlayingOpen = true
+                                    }
+                                }
+                            )
                         }
-                    )
+                    }
                     SpoolNavBar(selected = destination, onSelect = { destination = it })
                 }
             }
         ) { padding ->
-            val content = Modifier.padding(padding)
+            val content = Modifier.padding(padding).nestedScroll(scrollConnection)
             when (destination) {
                 Destination.SONGS -> SongsScreen(vm, content)
                 Destination.VIDEOS -> VideosScreen(vm, content)
-                Destination.SETTINGS -> SettingsScreen(vm, content)
-            }
+                Destination.SETTINGS ->
+                    if (duplicatesOpen) {
+                        DuplicatesScreen(vm, onBack = { duplicatesOpen = false }, modifier = content)
+                    } else {
+                        SettingsScreen(vm, content, onOpenDuplicates = { duplicatesOpen = true })
+                    }}
         }
     }
 }

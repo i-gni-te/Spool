@@ -7,6 +7,12 @@ import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+sealed interface RenameResult {
+    /** [fileName] is what the phone says the file is called now. */
+    data class Success(val fileName: String) : RenameResult
+    data class Failure(val reason: String) : RenameResult
+}
+
 class MediaFileEditor(private val context: Context) {
 
     suspend fun displayName(uri: String): String? = withContext(Dispatchers.IO) {
@@ -22,26 +28,43 @@ class MediaFileEditor(private val context: Context) {
     }
 
     /** Only call this after the user has granted write access (MediaStore.createWriteRequest). */
-    suspend fun rename(uri: String, newBaseName: String): Boolean = withContext(Dispatchers.IO) {
-        try {
+    suspend fun rename(uri: String, newBaseName: String): RenameResult =
+        withContext(Dispatchers.IO) {
             val target = Uri.parse(uri)
-            val oldName = displayName(uri) ?: return@withContext false
-            val extension = oldName.substringAfterLast('.', "")
+            val oldName = displayName(uri)
+                ?: return@withContext RenameResult.Failure("couldn't read the current file name")
             val base = sanitize(newBaseName)
-            if (base.isEmpty()) return@withContext false
-
-            val newName = if (extension.isEmpty()) base else "$base.$extension"
-            val (_, title) = TextNormalizer.parseFileName(newName)
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, newName)
-                put(MediaStore.MediaColumns.TITLE, title)
+            if (base.isEmpty()) {
+                return@withContext RenameResult.Failure("that name isn't allowed")
             }
-            context.contentResolver.update(target, values, null, null) > 0
-        } catch (e: Exception) {
-            false
+
+            val extension = oldName.substringAfterLast('.', "")
+            val newName = if (extension.isEmpty()) base else "$base.$extension"
+            if (newName == oldName) {
+                return@withContext RenameResult.Failure("that's already the file's name")
+            }
+
+            try {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, newName)
+                }
+                val rows = context.contentResolver.update(target, values, null, null)
+
+                // Read it back: trust what the phone says the file is called now
+                val after = displayName(uri)
+                when {
+                    after == null -> RenameResult.Failure("the file disappeared")
+                    after != oldName -> RenameResult.Success(after)
+                    rows > 0 -> RenameResult.Failure("the phone kept the old name")
+                    else -> RenameResult.Failure("Android didn't allow it")
+                }
+            } catch (e: SecurityException) {
+                RenameResult.Failure("Cue wasn't given permission for this file")
+            } catch (e: Exception) {
+                RenameResult.Failure(e.message ?: "something went wrong")
+            }
         }
-    }
 
     private fun sanitize(name: String): String =
-        name.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "").trim().take(120)
+        name.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "").trim().trimEnd('.').trim().take(120)
 }

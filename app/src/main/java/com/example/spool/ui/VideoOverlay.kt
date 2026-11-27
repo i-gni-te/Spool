@@ -130,6 +130,7 @@ fun ImmersiveMode(enabled: Boolean) {
 @Composable
 fun VideoPlayerScreen(
     player: Player,
+    swipeGestures: Boolean,
     state: PlayerState,
     zoom: Boolean,
     loop: LoopMode,
@@ -165,6 +166,7 @@ fun VideoPlayerScreen(
                 locked = locked,
                 skipSeconds = skipSeconds,
                 doubleTapSkip = doubleTapSkip,
+                swipeGestures = swipeGestures,
                 onLockedChange = onLockedChange,
                 onCycleLoop = onCycleLoop,
                 onPrevious = onPrevious,
@@ -190,6 +192,7 @@ fun VideoOverlay(
     locked: Boolean,
     skipSeconds: Int,
     doubleTapSkip: Boolean,
+    swipeGestures: Boolean,
     onLockedChange: (Boolean) -> Unit,
     onCycleLoop: () -> Unit,
     onPrevious: () -> Unit,
@@ -202,6 +205,7 @@ fun VideoOverlay(
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val adjuster = rememberSwipeAdjuster()
     val context = LocalContext.current
     var showTracks by remember { mutableStateOf(false) }
     val subtitleLauncher = rememberLauncherForActivityResult(
@@ -255,21 +259,25 @@ fun VideoOverlay(
     }
 
     Box(
-        modifier.pointerInput(locked, doubleTapSkip) {
-            detectTapGestures(
+        modifier.pointerInput(locked, doubleTapSkip, swipeGestures, skipSeconds) {
+            // One handler tells taps, double-taps and swipes apart, so they can't fight
+            detectVideoGestures(
+                swipeEnabled = swipeGestures && !locked,
+                doubleTapEnabled = doubleTapSkip && !locked,
                 onTap = { visible = !visible },
-                // Double-tap the left half to go back, the right half to go forward.
-                // With no double-tap handler, a single tap reacts straight away.
-                onDoubleTap = if (doubleTapSkip && !locked) {
-                    { offset -> skip(if (offset.x < size.width / 2f) -1 else 1) }
-                } else {
-                    null
-                }
+                onDoubleTap = { leftSide -> skip(if (leftSide) -1 else 1) },
+                onSwipeStart = { leftSide ->
+                    adjuster.begin(if (leftSide) AdjustKind.BRIGHTNESS else AdjustKind.VOLUME)
+                },
+                onSwipe = { delta -> adjuster.change(delta) },
+                onSwipeEnd = { adjuster.finish() }
             )
         }
     ) {
         // Skip feedback
         if (flash != 0 && !locked) {
+            // The brightness or volume level, shown while you swipe
+            SwipeIndicator(adjuster)
             Box(
                 Modifier
                     .align(if (flash < 0) Alignment.CenterStart else Alignment.CenterEnd)
@@ -435,7 +443,11 @@ fun VideoOverlay(
                             IconButton(onClick = act { onLockedChange(true) }) {
                                 Icon(Icons.Filled.Lock, "Lock controls", tint = Color.White)
                             }
-                            LoopButton(mode = loop, onClick = act(onCycleLoop))
+                            LoopButton(
+                                mode = loop,
+                                onClick = act(onCycleLoop),
+                                idleTint = Color.White.copy(alpha = 0.6f)
+                            )
                             Text(
                                 text = if (speed == speed.toInt().toFloat()) "${speed.toInt()}x" else "${speed}x",
                                 color = if (speed == 1f) Color.White.copy(alpha = 0.6f) else Ember,

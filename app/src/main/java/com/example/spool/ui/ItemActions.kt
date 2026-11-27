@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import com.example.spool.data.MediaClassifier
 import com.example.spool.data.MediaItemEntity
 import com.example.spool.ui.theme.Ember
+import androidx.compose.material.icons.filled.Audiotrack
 
 /**
  * A ⋮ button. Everything: Favorite, Share, Rename, Delete (to the trash). Songs: Play next,
@@ -118,6 +119,10 @@ fun ItemMenuButton(
                 MenuRow("Move to…", Icons.Filled.SwapHoriz) {
                     expanded = false
                     moving = true
+                }
+                MenuRow("Convert to audio", Icons.Filled.Audiotrack) {
+                    expanded = false
+                    vm.askConvert(item)
                 }
             }
 

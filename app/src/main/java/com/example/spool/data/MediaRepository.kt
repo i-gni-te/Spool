@@ -16,23 +16,6 @@ class MediaRepository(
         return if (q.isEmpty()) dao.all() else dao.search(q)
     }
 
-    fun recentlyPlayed(limit: Int = 12): Flow<List<MediaItemEntity>> = dao.recentlyPlayed(limit)
-
-    fun mostPlayed(limit: Int = 12): Flow<List<PlayedTrack>> = dao.mostPlayed(limit)
-
-    val favorites: Flow<Set<String>> = dao.favoriteUris().map { it.toHashSet() }
-
-    suspend fun favoriteUris(): Set<String> = dao.favoriteUrisOnce().toHashSet()
-
-    suspend fun setFavorite(uri: String, favorite: Boolean) {
-        if (favorite) dao.putFavorite(Favorite(uri, System.currentTimeMillis()))
-        else dao.removeFavorite(uri)
-    }
-    suspend fun recordPlay(uri: String) {
-        dao.ensureStat(uri)
-        dao.bumpStat(uri, System.currentTimeMillis())
-    }
-
     suspend fun searchOnce(query: String): List<MediaItemEntity> {
         val q = TextNormalizer.normalize(query)
         return if (q.isEmpty()) dao.allOnce() else dao.searchOnce(q)
@@ -47,26 +30,102 @@ class MediaRepository(
         dao.deleteByUris(listOf(uri))
         dao.removeFavorite(uri)
         dao.deleteLyrics(uri)
+        dao.removeNameOverride(uri)
     }
-    /** The user moved a video between Shorts and Videos. Survives rescans. */
+
+    /** The user moved a video between kinds. Survives rescans. */
     suspend fun setKind(uri: String, kind: Int) {
         dao.putOverride(KindOverride(uri, kind))
         dao.updateKind(uri, kind)
     }
+
+    /**
+     * The file was renamed: remember the new name so Cue shows it whatever the tags say,
+     * and update the list straight away instead of waiting for the next scan.
+     */
+    suspend fun applyRename(uri: String, title: String, artist: String?) {
+        val name = NameOverride(uri, title, artist)
+        dao.putNameOverride(name)
+        val current = dao.byUri(uri) ?: return
+        dao.upsertAll(listOf(renamed(current, name)))
+    }
+
+    private fun renamed(item: MediaItemEntity, name: NameOverride): MediaItemEntity {
+        val artist = name.artist ?: item.artist
+        val artistForKey = artist.takeIf { it != MediaScanner.UNKNOWN_ARTIST }
+        return item.copy(
+            title = name.title,
+            artist = artist,
+            searchKey = TextNormalizer.normalize(
+                listOfNotNull(artistForKey, name.title).joinToString(" ")
+            )
+        )
+    }
+
+    // ----- Play history -----
+
+    fun recentlyPlayed(limit: Int = 12): Flow<List<MediaItemEntity>> = dao.recentlyPlayed(limit)
+
+    fun mostPlayed(limit: Int = 12): Flow<List<PlayedTrack>> = dao.mostPlayed(limit)
+
+    suspend fun recordPlay(uri: String) {
+        dao.ensureStat(uri)
+        dao.bumpStat(uri, System.currentTimeMillis())
+    }
+
+    val playStats: Flow<List<PlayStat>> = dao.allStats()
+
+    suspend fun statsMap(): Map<String, PlayStat> = dao.allStatsOnce().associateBy { it.uri }
+
+    // ----- Watch positions, subtitles -----
+
+    suspend fun saveWatchPosition(uri: String, positionMs: Long, durationMs: Long) =
+        dao.putWatchPosition(WatchPosition(uri, positionMs, durationMs, System.currentTimeMillis()))
+
+    suspend fun clearWatchPosition(uri: String) = dao.clearWatchPosition(uri)
+
+    suspend fun watchPosition(uri: String): WatchPosition? = dao.watchPosition(uri)
+
+    fun continueWatching(limit: Int = 10): Flow<List<ResumeVideo>> = dao.continueWatching(limit)
+
+    suspend fun saveSubtitle(entry: SubtitleFile) = dao.putSubtitle(entry)
+
+    suspend fun subtitleFor(videoUri: String): SubtitleFile? = dao.subtitleFor(videoUri)
+
+    suspend fun allSubtitles(): List<SubtitleFile> = dao.allSubtitles()
+
+    // ----- Favorites and lyrics -----
+
+    val favorites: Flow<Set<String>> = dao.favoriteUris().map { it.toHashSet() }
+
+    suspend fun favoriteUris(): Set<String> = dao.favoriteUrisOnce().toHashSet()
+
+    suspend fun setFavorite(uri: String, favorite: Boolean) {
+        if (favorite) dao.putFavorite(Favorite(uri, System.currentTimeMillis()))
+        else dao.removeFavorite(uri)
+    }
+
+    fun lyricsFor(uri: String): Flow<LyricsEntry?> = dao.lyricsFlow(uri)
+
+    suspend fun saveLyrics(uri: String, text: String) =
+        dao.putLyrics(LyricsEntry(uri, text, System.currentTimeMillis()))
+
+    suspend fun removeLyrics(uri: String) = dao.deleteLyrics(uri)
 
     /** Adds new files, updates changed ones, removes files that no longer exist. */
     suspend fun rescan() {
         val found = scanner.scan()
 
         // The user's own choices win over the automatic guess
-        val overrides = dao.allOverrides().associate { it.uri to it.kind }
-        val applied = if (overrides.isEmpty()) {
-            found
-        } else {
-            found.map { item ->
-                val kind = overrides[item.uri]
-                if (kind != null && item.isVideo) item.copy(kind = kind) else item
-            }
+        val kinds = dao.allOverrides().associate { it.uri to it.kind }
+        val names = dao.allNameOverrides().associateBy { it.uri }
+        val applied = found.map { item ->
+            var result = item
+            val kind = kinds[item.uri]
+            if (kind != null && item.isVideo) result = result.copy(kind = kind)
+            val name = names[item.uri]
+            if (name != null) result = renamed(result, name)
+            result
         }
         dao.upsertAll(applied)
 
@@ -77,44 +136,24 @@ class MediaRepository(
             .forEach { dao.deleteByUris(it) }
 
         // Forget choices about files that no longer exist
-        overrides.keys
+        kinds.keys
             .filter { it !in foundUris }
             .chunked(500)
             .forEach { dao.deleteOverrides(it) }
-        // Forget hearts on files that no longer exist
+
+        names.keys
+            .filter { it !in foundUris }
+            .chunked(500)
+            .forEach { dao.deleteNameOverrides(it) }
+
         dao.favoriteUrisOnce()
             .filter { it !in foundUris }
             .chunked(500)
             .forEach { dao.deleteFavorites(it) }
-        // Forget lyrics of files that no longer exist
+
         dao.lyricsUris()
             .filter { it !in foundUris }
             .chunked(500)
             .forEach { dao.deleteLyricsFor(it) }
     }
-    suspend fun saveWatchPosition(uri: String, positionMs: Long, durationMs: Long) =
-        dao.putWatchPosition(WatchPosition(uri, positionMs, durationMs, System.currentTimeMillis()))
-
-    suspend fun clearWatchPosition(uri: String) = dao.clearWatchPosition(uri)
-
-    suspend fun watchPosition(uri: String): WatchPosition? = dao.watchPosition(uri)
-
-    val playStats: Flow<List<PlayStat>> = dao.allStats()
-
-    suspend fun statsMap(): Map<String, PlayStat> = dao.allStatsOnce().associateBy { it.uri }
-
-    fun continueWatching(limit: Int = 10): Flow<List<ResumeVideo>> = dao.continueWatching(limit)
-
-    suspend fun saveSubtitle(entry: SubtitleFile) = dao.putSubtitle(entry)
-
-    suspend fun subtitleFor(videoUri: String): SubtitleFile? = dao.subtitleFor(videoUri)
-
-    suspend fun allSubtitles(): List<SubtitleFile> = dao.allSubtitles()
-
-    fun lyricsFor(uri: String): Flow<LyricsEntry?> = dao.lyricsFlow(uri)
-
-    suspend fun saveLyrics(uri: String, text: String) =
-        dao.putLyrics(LyricsEntry(uri, text, System.currentTimeMillis()))
-
-    suspend fun removeLyrics(uri: String) = dao.deleteLyrics(uri)
 }

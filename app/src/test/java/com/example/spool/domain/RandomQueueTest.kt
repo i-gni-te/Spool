@@ -174,4 +174,41 @@ class RandomQueueTest {
         assertEquals(false, restored.shuffle)
         assertEquals(listOf(list[3]), restored.snapshot().queuedByUser)
     }
+
+    @Test
+    fun `peekNext shows what next will play, in shuffle and in order`() {
+        val shuffled = RandomQueue(songs(6), Random(20))
+        repeat(10) {
+            val peeked = shuffled.peekNext()
+            assertEquals(peeked, shuffled.peekNext()) // asking twice gives the same answer
+            assertEquals(peeked, shuffled.next())
+        }
+
+        val list = songs(4)
+        val ordered = RandomQueue(list, Random(21), shuffle = false)
+        ordered.startWith(list[1])
+        assertEquals("uri3", ordered.peekNext()!!.uri)
+        assertEquals("uri3", ordered.next()!!.uri)
+    }
+
+    @Test
+    fun `peekNext puts queued songs first and changes nothing`() {
+        val list = songs(5)
+        val q = RandomQueue(list.take(3), Random(22), shuffle = false)
+        q.startWith(list[0])
+        q.enqueue(list[4], atFront = false)
+        assertEquals("uri5", q.peekNext()!!.uri)
+        assertEquals("uri5", q.peekNext()!!.uri)
+        assertEquals(1, q.snapshot().queuedByUser.size)
+        assertEquals("uri5", q.next()!!.uri)
+    }
+
+    @Test
+    fun `peekNext replays forward history after going back`() {
+        val q = RandomQueue(songs(5), Random(23))
+        q.next()
+        val second = q.next()!!
+        q.previous()
+        assertEquals(second, q.peekNext())
+    }
 }

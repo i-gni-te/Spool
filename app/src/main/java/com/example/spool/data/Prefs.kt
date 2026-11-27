@@ -78,11 +78,22 @@ object Prefs {
         prefs(context).edit().putLong(NEW_SINCE, millis).apply()
     }
     private const val SKIP_SECONDS = "skip_seconds"
+
+    private const val GAPLESS = "gapless"
+    private const val WIDGET_ARTIST = "widget_artist"
+    private const val WIDGET_TITLE = "widget_title"
     private const val DOUBLE_TAP_SKIP = "double_tap_skip"
     private const val KEEP_AUDIO_ON_EXIT = "keep_audio_on_exit"
     private const val RESUME_WHERE_LEFT_OFF = "resume_where_left_off"
     private const val SHOW_NEW = "show_new"
     private const val NEW_DAYS = "new_days"
+    private const val FADE_SECONDS = "fade_seconds"
+    private const val AUTO_HIDE_MINI = "auto_hide_mini"
+    private const val REPORT_VIA = "report_via"
+    private const val THEME_STYLE = "theme_style"
+    private const val THEME_MODE = "theme_mode"
+
+    private const val SWIPE_GESTURES = "swipe_gestures"
     private const val ANIMATED_BACKGROUND = "animated_background"
 
     fun settings(context: Context): AppSettings {
@@ -92,12 +103,23 @@ object Prefs {
             skipSeconds = p.getInt(SKIP_SECONDS, d.skipSeconds)
                 .takeIf { it in AppSettings.SKIP_CHOICES } ?: d.skipSeconds,
             doubleTapSkip = p.getBoolean(DOUBLE_TAP_SKIP, d.doubleTapSkip),
+            swipeGestures = p.getBoolean(SWIPE_GESTURES, d.swipeGestures),
             keepAudioOnExit = p.getBoolean(KEEP_AUDIO_ON_EXIT, d.keepAudioOnExit),
             resumeWhereLeftOff = p.getBoolean(RESUME_WHERE_LEFT_OFF, d.resumeWhereLeftOff),
+            gapless = p.getBoolean(GAPLESS, d.gapless),
+            fadeSeconds = p.getInt(FADE_SECONDS, d.fadeSeconds)
+                .takeIf { it in AppSettings.FADE_CHOICES } ?: d.fadeSeconds,
+            autoHideMini = p.getBoolean(AUTO_HIDE_MINI, d.autoHideMini),
             showNew = p.getBoolean(SHOW_NEW, d.showNew),
             newDays = p.getInt(NEW_DAYS, d.newDays)
                 .takeIf { it in AppSettings.NEW_DAY_CHOICES } ?: d.newDays,
-            animatedBackground = p.getBoolean(ANIMATED_BACKGROUND, d.animatedBackground)
+            animatedBackground = p.getBoolean(ANIMATED_BACKGROUND, d.animatedBackground),
+            reportVia = runCatching { ReportVia.valueOf(p.getString(REPORT_VIA, null).orEmpty()) }
+                .getOrDefault(d.reportVia),
+            themeStyle = runCatching { ThemeStyle.valueOf(p.getString(THEME_STYLE, null).orEmpty()) }
+                .getOrDefault(d.themeStyle),
+            themeMode = runCatching { ThemeMode.valueOf(p.getString(THEME_MODE, null).orEmpty()) }
+                .getOrDefault(d.themeMode)
         )
     }
 
@@ -105,12 +127,52 @@ object Prefs {
         prefs(context).edit()
             .putInt(SKIP_SECONDS, s.skipSeconds)
             .putBoolean(DOUBLE_TAP_SKIP, s.doubleTapSkip)
+            .putBoolean(SWIPE_GESTURES, s.swipeGestures)
             .putBoolean(KEEP_AUDIO_ON_EXIT, s.keepAudioOnExit)
             .putBoolean(RESUME_WHERE_LEFT_OFF, s.resumeWhereLeftOff)
+            .putBoolean(GAPLESS, s.gapless)
+            .putInt(FADE_SECONDS, s.fadeSeconds)
+            .putBoolean(AUTO_HIDE_MINI, s.autoHideMini)
             .putBoolean(SHOW_NEW, s.showNew)
             .putInt(NEW_DAYS, s.newDays)
             .putBoolean(ANIMATED_BACKGROUND, s.animatedBackground)
+            .putString(REPORT_VIA, s.reportVia.name)
+            .putString(THEME_STYLE, s.themeStyle.name)
+            .putString(THEME_MODE, s.themeMode.name)
             .apply()
+    }
+
+    /** The last song or video that played, kept apart so each page's mini-player has its own. */
+    fun lastItem(context: Context, video: Boolean): MiniItem? {
+        val p = prefs(context)
+        val key = if (video) "last_video" else "last_song"
+        val uri = p.getString("${key}_uri", null) ?: return null
+        return MiniItem(
+            uri = uri,
+            title = p.getString("${key}_title", "").orEmpty(),
+            artist = p.getString("${key}_artist", "").orEmpty(),
+            isShort = p.getBoolean("${key}_short", false)
+        )
+    }
+
+    fun saveLastItem(context: Context, video: Boolean, item: MiniItem) {
+        val key = if (video) "last_video" else "last_song"
+        prefs(context).edit()
+            .putString("${key}_uri", item.uri)
+            .putString("${key}_title", item.title)
+            .putString("${key}_artist", item.artist)
+            .putBoolean("${key}_short", item.isShort)
+            .apply()
+    }
+
+    /** The last song shown on the home-screen widget, so it still reads right after a restart. */
+    fun saveWidgetInfo(context: Context, title: String, artist: String) {
+        prefs(context).edit().putString(WIDGET_TITLE, title).putString(WIDGET_ARTIST, artist).apply()
+    }
+
+    fun widgetInfo(context: Context): Pair<String, String> {
+        val p = prefs(context)
+        return p.getString(WIDGET_TITLE, "").orEmpty() to p.getString(WIDGET_ARTIST, "").orEmpty()
     }
 
     private const val SONGS_AS_FOLDERS = "songs_as_folders"

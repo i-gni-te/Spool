@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.spool.ui.theme.Ink
 import com.example.spool.ui.theme.artistPalette
+import com.example.spool.ui.theme.Palette
 
 /** Generated cover: the same seed (e.g. an artist) always gets the same gradient. */
 @Composable
@@ -29,7 +30,7 @@ fun Cover(
     isVideo: Boolean = false,
     corner: Dp = 14.dp
 ) {
-    val (first, second) = remember(seed) { artistPalette(seed) }
+    val (first, second) = remember(seed, Palette.current) { artistPalette(seed) }
     val initial = seed.trim().firstOrNull { it.isLetterOrDigit() }?.uppercase() ?: "♪"
 
     Box(

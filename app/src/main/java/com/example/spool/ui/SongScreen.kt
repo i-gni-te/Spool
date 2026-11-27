@@ -151,55 +151,61 @@ fun SongsScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
                 onQueryChange = vm::onQueryChange,
                 placeholder = "Type an artist or song",
                 modifier = Modifier.padding(top = 4.dp),
+                onVoiceStart = vm::pauseForVoice,
+                onVoiceCancel = vm::cancelVoice,
                 onGo = { shuffleAll() }
             )
         }
 
-        // All songs | Folders
+        // View and sort chips on one line: All songs, Folders, then the sort options
         if (openGroup == null) {
             item {
-                Row(
+                val chipColors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Ember.copy(alpha = 0.18f),
+                    selectedLabelColor = Ember
+                )
+                LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(top = 4.dp)
                 ) {
-                    listOf(false to "All songs", true to "Folders").forEach { (folders, label) ->
+                    item(key = "view-all") {
                         FilterChip(
-                            selected = asFolders == folders,
+                            selected = !asFolders,
                             onClick = {
-                                asFolders = folders
+                                asFolders = false
                                 openFolderKey = null
-                                Prefs.setSongsAsFolders(context, folders)
+                                Prefs.setSongsAsFolders(context, false)
                             },
-                            label = { Text(label) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Ember.copy(alpha = 0.18f),
-                                selectedLabelColor = Ember
-                            )
+                            label = { Text("All songs") },
+                            colors = chipColors
                         )
                     }
-                }
-            }
-        }
-
-        // Sort chips (the folder view is always A–Z)
-        if (openGroup == null && !asFolders) {
-            item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(SongSort.entries.toList(), key = { it.name }) { option ->
+                    item(key = "view-folders") {
                         FilterChip(
-                            selected = sort == option,
-                            onClick = { vm.setSongSort(option) },
-                            label = { Text(option.label) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Ember.copy(alpha = 0.18f),
-                                selectedLabelColor = Ember
-                            )
+                            selected = asFolders,
+                            onClick = {
+                                asFolders = true
+                                openFolderKey = null
+                                Prefs.setSongsAsFolders(context, true)
+                            },
+                            label = { Text("Folders") },
+                            colors = chipColors
                         )
+                    }
+                    // The sort options only apply to the full list
+                    if (!asFolders) {
+                        items(SongSort.entries.toList(), key = { it.name }) { option ->
+                            FilterChip(
+                                selected = sort == option,
+                                onClick = { vm.setSongSort(option) },
+                                label = { Text(option.label) },
+                                colors = chipColors
+                            )
+                        }
                     }
                 }
             }
         }
-
         message?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
 
         when {

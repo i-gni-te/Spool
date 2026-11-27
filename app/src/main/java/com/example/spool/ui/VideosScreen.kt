@@ -161,6 +161,8 @@ fun VideosScreen(vm: MusicViewModel, modifier: Modifier = Modifier) {
                 query = query,
                 onQueryChange = vm::onQueryChange,
                 placeholder = "search video",
+                onVoiceStart = vm::pauseForVoice,
+                onVoiceCancel = vm::cancelVoice,
                 onGo = { shuffleCurrent() }
             )
         }

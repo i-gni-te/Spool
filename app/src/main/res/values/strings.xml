@@ -2,5 +2,6 @@
     <string name="app_name">Cue</string>
     <string name="shortcut_resume">Resume</string>
     <string name="shortcut_shuffle_songs">Shuffle songs</string>
+    <string name="widget_description">Shuffle, play and skip your music from the home screen</string>
     <string name="shortcut_shuffle_videos">Shuffle videos</string>
 </resources>
